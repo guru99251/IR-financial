@@ -3,14 +3,14 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Plus, Save, Trash2, Download, Rocket, Calculator, Settings,
-  BarChart3, Table2, LayoutGrid, Building2, Database
+  BarChart3, Table2, LayoutGrid, Building2, Database,
+  ChevronDown
 } from "lucide-react";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import Chart from "chart.js/auto";
 import type { Chart as ChartType } from "chart.js";
@@ -528,31 +528,32 @@ export default function FinancialCalculatorApp(){
           </div>
         )}
 
-        {/* ③ 표보기 */}
-        {tab==="table" && (
-          <div className="pt-6 space-y-6">
-            <HoverCard>
-              <CardHeader><CardTitle className="text-sm text-slate-600">구간별 월 발생비용</CardTitle></CardHeader>
-              <CardContent><CostByPeriodTable state={state}/></CardContent>
-            </HoverCard>
-            <HoverCard>
-              <CardHeader><CardTitle className="text-sm text-slate-600">MAU별 BEP (200명 단위)</CardTitle></CardHeader>
-              <CardContent><BEPTable state={state}/></CardContent>
-            </HoverCard>
-            <HoverCard>
-              <CardHeader><CardTitle className="text-sm text-slate-600">누적손익 (월별)</CardTitle></CardHeader>
-              <CardContent><MonthlyTable months={months}/></CardContent>
-            </HoverCard>
-            <HoverCard>
-              <CardHeader><CardTitle className="text-sm text-slate-600">1~3년차 시나리오별 매출/이익</CardTitle></CardHeader>
-              <CardContent><YearlyTable state={state}/></CardContent>
-            </HoverCard>
-            <HoverCard>
-              <CardHeader><CardTitle className="text-sm text-slate-600">투자금 재무 운용 (최대 적자 시점까지)</CardTitle></CardHeader>
-              <CardContent><FundingTable state={state} months={months} minCumMonth={minCumMonth}/></CardContent>
-            </HoverCard>
-          </div>
-        )}
+      {/* 표 보기 */}
+      {tab==="table" && (
+        <div className="pt-6 space-y-4">
+          <Collapse title="구간별 월 발생비용" defaultOpen={false}>
+            <CostByPeriodTable state={state}/>
+            <p className="text-xs text-slate-500 mt-2">요약: 각 구간 월 고정비 합계를 표시합니다.</p>
+          </Collapse>
+          <Collapse title="1~3년차 비용 비율 (변동비/고정비)" defaultOpen={false}>
+            <YearlyCostRatioTable months={months}/>
+            <p className="text-xs text-slate-500 mt-2">Y1~Y3 각 연도의 총 매출 대비 변동비, 고정비, 순이익 비율입니다.</p>
+          </Collapse>
+          <Collapse title="누적손익 (월별)" defaultOpen={false}>
+            <MonthlyTable months={months}/>
+          </Collapse>
+          <Collapse title="1~3년차 시나리오별 매출/이익" defaultOpen={false}>
+            <YearlyTable state={state}/>
+          </Collapse>
+          <Collapse title="투자금 재무 운용 (최대 적자 시점까지)" defaultOpen={false}>
+            <FundingTable state={state} months={months} minCumMonth={minCumMonth}/>
+          </Collapse>
+          <Collapse title="MAU별 BEP (200명 단위)" defaultOpen={false}>
+            <BEPTable state={state}/>
+            <p className="text-xs text-slate-500 mt-2">요약: 공헌이익 ≥ 고정비 지점이 BEP 입니다.</p>
+          </Collapse>
+        </div>
+      )}
       </main>
 
       <footer className="py-8 text-center text-xs text-slate-500">
@@ -606,6 +607,68 @@ function ChartCard({title,children}:{title:string,children:React.ReactNode}){
         <div className="relative h-80">{children}</div> {/* h-80 */}
       </CardContent>
     </HoverCard>
+  );
+}
+
+/** 간단 Collapse (접기/펼치기) — 추가 설치 불필요 */
+function Collapse({
+  title,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = React.useState(defaultOpen);
+  const contentRef = React.useRef<HTMLDivElement | null>(null);
+  const [h, setH] = React.useState<number | string>(open ? "auto" : 0);
+
+  // 열릴 때는 실제 높이로 애니메이션 -> 완료 후 auto로 고정, 닫힐 때 0
+  React.useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    if (open) {
+      const full = el.scrollHeight;
+      setH(full);
+      const t = setTimeout(() => setH("auto"), 200);
+      return () => clearTimeout(t);
+    } else {
+      // 닫을 때는 현재 높이에서 0으로
+      const full = el.scrollHeight;
+      setH(full);
+      requestAnimationFrame(() => setH(0));
+    }
+  }, [open]);
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
+      {/* 헤더 (클릭 영역) */}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+        aria-expanded={open}
+        aria-controls={`collapse-${title}`}
+      >
+        <span className="text-base font-semibold text-slate-700">{title}</span>
+        <ChevronDown
+          className={`w-4 h-4 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+
+      {/* 내용 (부드러운 열림/닫힘) */}
+      <div
+        id={`collapse-${title}`}
+        style={{ maxHeight: h, transition: "max-height 0.2s ease" }}
+        className="overflow-hidden"
+        aria-hidden={!open}
+      >
+        <div ref={contentRef} className="px-4 pb-4 pt-0 text-sm text-slate-600">
+          {children}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -793,25 +856,33 @@ function MonthlyTable({months}:{months:any[]}){
 
 function YearlyTable({state}:{state:any}){
   const sc = calcScenarioYears(state);
-  const rows = sc.neutral.map((r:any,i:number)=>({
-    year:r.year,
-    con: sc.conservative[i].net,
-    neu: r.net,
-    agg: sc.aggressive[i].net
-  }));
+
+  // 열 헤더: Y1, Y2, Y3
+  const yearHeaders = sc.neutral.map((r:any)=>`Y${r.year}`);
+
+  // 행: 보수적 / 중립 / 공격적
+  const rows = [
+    { label: "보수적", values: sc.conservative.map((r:any)=>r.net) },
+    { label: "중립",   values: sc.neutral.map((r:any)=>r.net) },
+    { label: "공격적", values: sc.aggressive.map((r:any)=>r.net) },
+  ];
+
   return (
     <div className="overflow-auto">
       <table className="w-full text-sm">
         <thead className="bg-slate-100">
-          <tr className="[&>th]:px-3 [&>th]:py-2 border-b border-slate-200"><th>연도</th><th className="text-right">보수적</th><th className="text-right">중립</th><th className="text-right">공격적</th></tr>
+          <tr className="[&>th]:px-3 [&>th]:py-2 border-b border-slate-200">
+            <th>시나리오</th>
+            {yearHeaders.map(y => <th key={y} className="text-right">{y}</th>)}
+          </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {rows.map(r=> (
-            <tr key={r.year} className="[&>td]:px-3 [&>td]:py-2">
-              <td>Y{r.year}</td>
-              <td className="text-right">{KRW.fmt(r.con)}</td>
-              <td className="text-right">{KRW.fmt(r.neu)}</td>
-              <td className="text-right">{KRW.fmt(r.agg)}</td>
+          {rows.map((row) => (
+            <tr key={row.label} className="[&>td]:px-3 [&>td]:py-2">
+              <td>{row.label}</td>
+              {row.values.map((v:number, i:number) => (
+                <td key={i} className="text-right">{KRW.fmt(v)}</td>
+              ))}
             </tr>
           ))}
         </tbody>
@@ -819,6 +890,59 @@ function YearlyTable({state}:{state:any}){
     </div>
   );
 }
+
+/** 연도별 비용 비율 테이블 */
+function YearlyCostRatioTable({months}:{months:any[]}){
+  const sumYear = (year:number)=>{
+    const start=(year-1)*12, end=year*12;
+    const m=months.filter(r=>r.month>start && r.month<=end);
+    return {
+      rev:      m.reduce((a,b)=>a+b.rev,0),
+      varCost:  m.reduce((a,b)=>a+b.varCost,0),
+      fixed:    m.reduce((a,b)=>a+b.fixed,0),
+      net:      m.reduce((a,b)=>a+b.net,0),
+    };
+  };
+  const data = [1,2,3].map(y=>({year:y, ...sumYear(y)}));
+
+  return (
+    <div className="overflow-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-slate-100">
+          <tr className="[&>th]:px-3 [&>th]:py-2 border-b border-slate-200">
+            <th>구분</th>
+            {data.map(d=><th key={d.year} className="text-right">Y{d.year}</th>)}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          <tr>
+            <td className="px-3 py-2">매출</td>
+            {data.map((d,i)=><td key={i} className="text-right">{KRW.fmt(d.rev)}</td>)}
+          </tr>
+          <tr>
+            <td className="px-3 py-2">변동비 비율</td>
+            {data.map((d,i)=><td key={i} className="text-right">
+              {d.rev? ((d.varCost/d.rev)*100).toFixed(1)+'%' : '-'}
+            </td>)}
+          </tr>
+          <tr>
+            <td className="px-3 py-2">고정비 비율</td>
+            {data.map((d,i)=><td key={i} className="text-right">
+              {d.rev? ((d.fixed/d.rev)*100).toFixed(1)+'%' : '-'}
+            </td>)}
+          </tr>
+          <tr>
+            <td className="px-3 py-2">순이익 비율</td>
+            {data.map((d,i)=><td key={i} className="text-right">
+              {d.rev? ((d.net/d.rev)*100).toFixed(1)+'%' : '-'}
+            </td>)}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 
 function FundingTable({state, months, minCumMonth}:{state:any, months:any[], minCumMonth:number}){
   const until = months.filter(m=>m.month<=minCumMonth);
