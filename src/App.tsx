@@ -427,74 +427,107 @@ export default function FinancialCalculatorApp(){
         </Card>
 
         {/* (3) 결과 */}
-        <SectionTitle icon={<BarChart3 className="w-4 h-4"/>} title="③ 시뮬레이션 (결과)" subtitle="요약 · 차트 · 표"/>
-        <Tabs value={tab} onValueChange={setTab} className="w-full">
+        <SectionTitle icon={<BarChart3 className="w-4 h-4" />} title="③ 시뮬레이션 (결과)" subtitle="요약 · 차트 · 표" />
+
+        {/* KPI 대시보드 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mt-3">
+          <StatCard
+            title="BEP 시기"
+            value={bepMonth ? `${bepMonth}` : '—'}
+            unit="개월차"
+            tone={bepMonth ? 'good' : 'muted'}
+          />
+          <StatCard
+            title="누적 적자 최대"
+            value={minCum < 0 ? KRW.fmt(-minCum) : '—'}
+            unit={minCum < 0 ? `(@ ${minCumMonth}개월차)` : ''}
+            tone={minCum < 0 ? 'bad' : 'muted'}
+          />
+          <StatCard
+            title="최종 ROI"
+            value={
+              (() => {
+                const totalNet = months.reduce((a, b) => a + b.net, 0);
+                const roi = totalInvestNeed > 0 ? (totalNet / totalInvestNeed) * 100 : 0;
+                return `${roi.toFixed(1)}%`;
+              })()
+            }
+            tone="good"
+          />
+          <StatCard
+            title="총 필요 투자금 (예비비 포함)"
+            value={KRW.fmt(totalInvestNeed)}
+            tone="muted"
+          />
+        </div>
+
+        {/* 문장형 요약 */}
+        <KPIHeader
+          label="요약"
+          text={
+            bepMonth
+              ? `현재 가정에서는 약 ${bepMonth}개월차에 손익분기점을 달성합니다. 최대 적자는 ${minCumMonth}개월차에 ${KRW.fmt(-minCum)} 수준으로 예상되며, 이를 기준으로 총 필요 투자금(예비비 포함)은 ${KRW.fmt(totalInvestNeed)}입니다.`
+              : `현재 가정에서는 시뮬레이션 구간 내 BEP를 달성하지 못합니다. 전환율, MAU, 비용 가정치를 조정해 보세요.`
+          }
+        />
+
+        {/* 차트/표 탭 — 로직 그대로, UI만 경량 가독성 */}
+        <Tabs value={tab} onValueChange={setTab} className="w-full mt-2">
           <TabsList className="grid grid-cols-3 w-full md:w-auto">
-            <TabsTrigger value="sum">요약보기</TabsTrigger>
             <TabsTrigger value="chart">차트보기</TabsTrigger>
             <TabsTrigger value="table">표보기</TabsTrigger>
+            <TabsTrigger value="sum">세부요약</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="sum" className="pt-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              <KPI label="BEP 시기" value={bepMonth? `${bepMonth}개월차`:'미달성'}/>
-              <KPI label="누적적자 최대 (시점/금액)" value={minCumMonth? `${minCumMonth}개월차 / ${KRW.fmt(-minCum)}`:'-'}/>
-              <KPI label="흑자전환 시점" value={bepMonth? `${bepMonth}개월차`:'미달성'}/>
-              <KPI label="최종 ROI" value={`${(((months.reduce((a,b)=>a+b.net,0)) / (totalInvestNeed||1))*100).toFixed(1)}%`}/>
-              <KPI label="필요 투자금 (6/12/24M)" value={`6M ${KRW.fmt(needed.need6*1.10)}, 12M ${KRW.fmt(needed.need12*1.10)}, 24M ${KRW.fmt(needed.need24*1.10)}`}/>
-              <KPI label="총 필요 투자금 (예비비 포함)" value={KRW.fmt(totalInvestNeed)}/>
-            </div>
-            {officeOffRanges.length>0 && (
-              <p className="mt-3 text-sm text-amber-700 flex items-center gap-2"><Building2 className="w-4 h-4"/> 사무실 비용 제외 구간 {officeOffRanges.map(r=>`${r[0]}~${r[1]}개월차`).join(', ')} 은(는) 공간 지원 필요.</p>
-            )}
-          </TabsContent>
-
+          {/* 차트 */}
           <TabsContent value="chart" className="pt-4">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <ChartCard title="누적 손익"><canvas ref={cumRef} className="w-full h-full" role="img" aria-label="누적 손익 라인 차트"/></ChartCard>
-              <ChartCard title="월 매출 · 비용"><canvas ref={monthlyRef} className="w-full h-full" role="img" aria-label="월 매출·비용 라인 차트"/></ChartCard>
-              <ChartCard title="연도별 시나리오 (보수/중립/공격)"><canvas ref={scRef} className="w-full h-full" role="img" aria-label="시나리오 바 차트"/></ChartCard>
+              <ChartCard title="누적 손익">
+                <canvas ref={cumRef} className="w-full h-full" role="img" aria-label="누적 손익 라인 차트" />
+              </ChartCard>
+              <ChartCard title="월 매출 · 비용">
+                <canvas ref={monthlyRef} className="w-full h-full" role="img" aria-label="월 매출·비용 라인 차트" />
+              </ChartCard>
+              <ChartCard title="연도별 시나리오 (보수/중립/공격)">
+                <canvas ref={scRef} className="w-full h-full" role="img" aria-label="시나리오 바 차트" />
+              </ChartCard>
             </div>
           </TabsContent>
 
+          {/* 표 */}
           <TabsContent value="table" className="pt-4 space-y-4">
             <HoverCard>
               <CardHeader><CardTitle className="text-sm text-slate-600">구간별 월 발생비용</CardTitle></CardHeader>
-              <CardContent>
-                <CostByPeriodTable state={state}/>
-                <p className="text-xs text-slate-500 mt-2">요약: 각 구간 월 고정비 합계를 표시합니다.</p>
-              </CardContent>
+              <CardContent><CostByPeriodTable state={state} /></CardContent>
             </HoverCard>
             <HoverCard>
               <CardHeader><CardTitle className="text-sm text-slate-600">MAU별 BEP (200명 단위)</CardTitle></CardHeader>
-              <CardContent>
-                <BEPTable state={state}/>
-                <p className="text-xs text-slate-500 mt-2">요약: 공헌이익 ≥ 고정비 지점이 BEP 입니다.</p>
-              </CardContent>
+              <CardContent><BEPTable state={state} /></CardContent>
             </HoverCard>
             <HoverCard>
               <CardHeader><CardTitle className="text-sm text-slate-600">누적손익 (월별)</CardTitle></CardHeader>
-              <CardContent>
-                <MonthlyTable months={months}/>
-              </CardContent>
+              <CardContent><MonthlyTable months={months} /></CardContent>
             </HoverCard>
             <HoverCard>
-              <CardHeader><CardTitle className="text-sm text-slate-600">1~3년차 시나리오별 매출/이익</CardTitle></CardHeader>
-              <CardContent>
-                <YearlyTable state={state}/>
-              </CardContent>
+              <CardHeader><CardTitle className="text-sm text-slate-600">1~3년차 시나리오별 순이익</CardTitle></CardHeader>
+              <CardContent><YearlyTable state={state} /></CardContent>
             </HoverCard>
-            <HoverCard>
-              <CardHeader><CardTitle className="text-sm text-slate-600">투자금 재무 운용 (최대 적자 시점까지)</CardTitle></CardHeader>
-              <CardContent>
-                <FundingTable state={state} months={months} minCumMonth={minCumMonth}/>
-              </CardContent>
-            </HoverCard>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" className="gap-2" onClick={()=>exportCSV(months)}>
-                <Download className="w-4 h-4"/> CSV 내보내기
-              </Button>
-              <p className="text-xs text-slate-500">숫자 입력: 1억, 3.5백만 처럼 단위 입력 가능 · %는 3 또는 3% 모두 가능</p>
+          </TabsContent>
+
+          {/* 세부요약 — KPI를 보완하는 텍스트 섹션 */}
+          <TabsContent value="sum" className="pt-4">
+            <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5 leading-relaxed text-slate-700">
+              <ul className="list-disc pl-5 space-y-2 text-sm">
+                <li>전환율·MAU·서버비 가정치는 <b>② 활성 사용자 시나리오</b>에서 직접 조정할 수 있습니다.</li>
+                <li>공격적/보수적 시나리오는 <b>가정치 스케일링</b>으로 산출되며(전환율↑/MAU↑/서버비↓), 차트의 연도별 막대 그래프에서 비교할 수 있습니다.</li>
+                <li>필요 투자금은 최대 적자 시점 기준에 10% 예비비를 포함해 추정합니다.</li>
+                <li>CSV 내보내기 버튼으로 월별 데이터를 내려받아 2차 가공이 가능합니다.</li>
+              </ul>
+              <div className="mt-3">
+                <Button variant="outline" className="gap-2" onClick={() => exportCSV(months)}>
+                  <Download className="w-4 h-4" /> CSV 내보내기
+                </Button>
+              </div>
             </div>
           </TabsContent>
         </Tabs>
@@ -570,6 +603,52 @@ function NumberInput({label,value,onChange}:{label:string,value:number,onChange:
       <Input type="number" value={value} onChange={(e)=>onChange(parseFloat(e.target.value||'0'))}/>
     </div>
   )
+}
+
+function StatCard({
+  title,
+  value,
+  unit,
+  tone = 'muted',
+}: {
+  title: string;
+  value: string;
+  unit?: string;
+  tone?: 'good' | 'bad' | 'muted';
+}) {
+  const toneCls =
+    tone === 'good'
+      ? 'text-emerald-600'
+      : tone === 'bad'
+      ? 'text-rose-600'
+      : 'text-slate-700';
+  const unitCls = 'text-xs text-slate-500 ml-1';
+  return (
+    <motion.div whileHover={{ scale: 1.01 }}>
+      <Card className="rounded-2xl shadow-sm border-slate-200">
+        <CardHeader className="pb-1">
+          <CardTitle className="text-xs text-slate-500">{title}</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <div className={`font-bold ${toneCls} text-2xl md:text-3xl tracking-tight`}>
+            {value}
+            {unit ? <span className={unitCls}>{unit}</span> : null}
+          </div>
+        </CardContent>
+      </Card>
+    </motion.div>
+  );
+}
+
+function KPIHeader({ label, text }: { label: string; text: string }) {
+  return (
+    <div className="mt-4">
+      <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">{label}</div>
+      <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-700">
+        {text}
+      </div>
+    </div>
+  );
 }
 
 /*************************
