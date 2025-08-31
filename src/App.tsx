@@ -53,24 +53,23 @@ const KRW = {
 }
 
 // 가중치 적용 유틸
-const clamp01 = (v:number)=> Math.max(0, Math.min(1, v));
+const clamp01 = (v:number)=> Math.max(0, Math.min(1, v));0
 
 /** 기간 가정에 가중치(mult)를 적용: MAU↑, 전환율↑, 서버비↓(규모효율) */
-function adjustPeriodByWeight(p:any, mult:number, beta=0.6, gamma=0.4){
-  return {
-    ...p,
-    mau: Math.max(0, Math.round(p.mau * mult)),
-    subCR: clamp01(p.subCR * (1 + beta*(mult - 1))),
-    prtCR: clamp01(p.prtCR * (1 + beta*(mult - 1))),
-    server: Math.max(0, Math.round(p.server * (1 - gamma*(mult - 1)))),
-  };
+function adjustPeriodByWeight(p:any, mult:number, beta:number, gamma:number){
+return {
+...p,
+mau: Math.max(0, Math.round(p.mau * mult)),
+subCR: clamp01(p.subCR * (1 + beta*(mult - 1))),
+prtCR: clamp01(p.prtCR * (1 + beta*(mult - 1))),
+server: Math.max(0, Math.round(p.server * (1 - gamma*(mult - 1)))),
+};
 }
 
-function adjustStateForScenario(base:any, mult:number){
-  return {
-    ...base,
-    periods: base.periods.map((p:any)=>adjustPeriodByWeight(p, mult))
-  };
+
+/** state의 periods에만 가중치(mult)를 적용해 새 state 반환 */
+function adjustStateForScenario(base:any, mult:number, beta:number, gamma:number){
+return { ...base, periods: base.periods.map((p:any)=>adjustPeriodByWeight(p, mult, beta, gamma)) };
 }
 
 /*************************
@@ -81,13 +80,15 @@ const STORE_KEY = 'lm_fin_cases_v7';
 
 const defaultState = {
   name: "Case A (default)",
+  sensitivity: { beta: 0.6, gamma: 0.4 }, // ← 콤마 필수!
+
 
   // 요금/단가
-  pricing: { standard: 7_900, pro: 0 },          // pro 안 쓰면 0 유지
+  pricing: { standard: 7_900, pro: 0 }, // pro 안 쓰면 0 유지
   print: {
-    price: 40_000,                               // 인쇄 객단가
-    outsUnit: 15_000, outsRate: 1,               // 외주 원가(건), 배수
-    leaseUnit: 7_000,  leaseRate: 1              // 리스 원가(건), 배수
+  price: 40_000, // 인쇄 객단가
+  outsUnit: 15_000, outsRate: 1, // 외주 원가(건), 배수
+  leaseUnit: 7_000, leaseRate: 1 // 리스 원가(건), 배수
   },
 
   // 고정비
@@ -130,7 +131,12 @@ export default function FinancialCalculatorApp(){
 
   // 계산 결과
   const { months, minCum, minCumMonth, bepMonth } = useMemo(
-    ()=>calcMonthlySeries(state, scenarioMult),
+    ()=>calcMonthlySeries(
+      state,
+      scenarioMult,
+      state.sensitivity?.beta ?? 0.6,
+      state.sensitivity?.gamma ?? 0.4
+    ),
     [state, scenarioMult, simTick]
   );
   const needed = useMemo(()=>calcNeededFund(months),[months]);
@@ -339,6 +345,22 @@ export default function FinancialCalculatorApp(){
                            onChange={(v)=>setState(s=>({...s,weights:{...s.weights,agg:v}}))}/>
             </CardContent>
           </HoverCard>
+
+          <HoverCard>
+          <CardHeader><CardTitle className="text-sm text-slate-600">민감도 가정치</CardTitle></CardHeader>
+          <CardContent className="grid grid-cols-2 gap-3">
+            <NumberInput
+              label="전환율 민감도 β (0~1)"
+              value={state.sensitivity?.beta ?? 0.6}
+              onChange={(v)=>setState(s=>({...s, sensitivity:{...s.sensitivity, beta: Math.max(0, Math.min(1, v||0))}}))}
+            />
+            <NumberInput
+              label="서버비 규모효율 γ (0~1)"
+              value={state.sensitivity?.gamma ?? 0.4}
+              onChange={(v)=>setState(s=>({...s, sensitivity:{...s.sensitivity, gamma: Math.max(0, Math.min(1, v||0))}}))}
+            />
+          </CardContent>
+        </HoverCard>
 
           <HoverCard>
             <CardHeader><CardTitle className="text-sm text-slate-600">기간(개월) · MAU 구간</CardTitle></CardHeader>
@@ -578,7 +600,12 @@ export default function FinancialCalculatorApp(){
             <FundingTable state={state} months={months} minCumMonth={minCumMonth}/>
           </Collapse>
           <Collapse title="MAU별 BEP (200명 단위)" defaultOpen={false}>
-            <BEPTable state={state}/>
+            {(() => {
+              const beta = state.sensitivity?.beta ?? 0.6;
+              const gamma = state.sensitivity?.gamma ?? 0.4;
+              const adjState = adjustStateForScenario(state, scenarioMult, beta, gamma);
+              return <BEPTable state={adjState}/>;
+            })()}
             <p className="text-xs text-slate-500 mt-2">요약: 공헌이익 ≥ 고정비 지점이 BEP 입니다.</p>
           </Collapse>
         </div>
@@ -1013,85 +1040,104 @@ function mergeRanges(ranges:number[][]){
   return res;
 }
 
-function calcMonthlySeries(state:any, mult:number=1.0){
-  // 1) 가중치 적용된 기간 목록
-  const basePeriods = [...state.periods].sort((a,b)=>a.start-b.start);
-  const periods = basePeriods.map(p=>adjustPeriodByWeight(p, mult)); // ← 가중치 반영
+function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:number=0.4){
+// 1) 가중치 적용된 기간 목록
+const basePeriods = [...state.periods].sort((a,b)=>a.start-b.start);
+const periods = basePeriods.map(p=>adjustPeriodByWeight(p, mult, beta, gamma));
 
-  const maxEnd = periods.reduce((m:number,p:any)=>Math.max(m,p.end),0);
-  const months:any[] = [];
 
-  const stdPrice = state.pricing.standard;
-  const printPrice = state.print.price;
-  const outsCost = state.print.outsUnit * state.print.outsRate;
-  const leaseCost = state.print.leaseUnit * state.print.leaseRate;
+const maxEnd = periods.reduce((m:number,p:any)=>Math.max(m,p.end),0);
+const months:any[] = [];
 
-  let lastMAU = 0; // 직전 월 MAU
 
-  for(let m=1; m<=maxEnd; m++){
-    const pIdx = periods.findIndex((pp:any)=>m>=pp.start && m<=pp.end);
-    if(pIdx<0){
-      months.push({month:m, rev:0, subRev:0, prtRev:0, varCost:0, fixed:0, net:0, mau:0, cum:0, ratios:{sub:0,prt:0}});
-      continue;
-    }
-    const p = periods[pIdx];
+const stdPrice = state.pricing.standard;
+const printPrice = state.print.price;
+const outsCost = state.print.outsUnit * state.print.outsRate;
+const leaseCost = state.print.leaseUnit * state.print.leaseRate;
 
-    // 선형 증가: 이전 구간의 "가중치 적용 후 MAU"를 기준으로 현재 구간 목표까지 선형
-    const prevTarget = (pIdx>0)? periods[pIdx-1].mau : p.mau; // 첫 구간은 자기 목표
-    const periodLen = (p.end - p.start + 1);
-    const step = (p.mau - prevTarget) / periodLen;
 
-    const mau = (pIdx===0)? p.mau : Math.max(0, Math.round(lastMAU + step));
-    lastMAU = mau;
+let lastMAU = 0; // 직전 월 MAU
 
-    const subUsers = mau * p.subCR;
-    const prtOrders = mau * p.prtCR; // 1인 1주문 가정
-    const subRev = subUsers * stdPrice;
-    const prtRev = prtOrders * printPrice;
 
-    const varCost = prtOrders * (p.hasLease? leaseCost : outsCost);
+for(let m=1; m<=maxEnd; m++){
+const pIdx = periods.findIndex((pp:any)=>m>=pp.start && m<=pp.end);
+if(pIdx<0){
+months.push({month:m, rev:0, subRev:0, prtRev:0, varCost:0, fixed:0, net:0, mau:0, cum:0, ratios:{sub:0,prt:0}});
+continue;
+}
+const p = periods[pIdx];
 
-    // 고정비: 서버(가중치 반영됨) + 나머지(사무실/인건비/리스 등은 그대로)
-    const wage = p.hasWage ? (p.avgWage * p.heads) : 0;
-    const office = p.hasOffice ? state.fixed.office : 0;
-    const leaseFix = p.hasLease ? state.fixed.leaseMonthly * p.leaseCnt : 0;
-    const fixed = p.server + wage + office + state.fixed.mkt + state.fixed.legal + leaseFix;
 
-    const net = (subRev + prtRev - varCost) - fixed;
+// 선형 증가: 이전 구간(가중치 적용 후) 목표 → 현재 목표까지 선형
+const prevTarget = (pIdx>0)? periods[pIdx-1].mau : p.mau; // 첫 구간은 자기 목표
+const periodLen = (p.end - p.start + 1);
+const step = (p.mau - prevTarget) / periodLen;
 
-    months.push({month:m, mau, subRev, prtRev, rev:subRev+prtRev, varCost, fixed, net, ratios:{sub:p.subCR, prt:p.prtCR}});
-  }
 
-  // 누적/최저/흑자전환
-  let cum=0, minCum=0, minCumMonth=0, bepMonth:number|undefined=undefined;
-  months.forEach(r=>{ cum+=r.net; r.cum=cum; if(cum<minCum){ minCum=cum; minCumMonth=r.month; } if(bepMonth===undefined && r.cum>=0) bepMonth=r.month; });
+const mau = (pIdx===0)? p.mau : Math.max(0, Math.round(lastMAU + step));
+lastMAU = mau;
 
-  return {months, minCum, minCumMonth, bepMonth};
+
+const subUsers = mau * p.subCR;
+const prtOrders = mau * p.prtCR; // 1인 1주문 가정
+const subRev = subUsers * stdPrice;
+const prtRev = prtOrders * printPrice;
+
+
+const varCost = prtOrders * (p.hasLease? leaseCost : outsCost);
+
+
+// 고정비: 서버(가중치 반영됨) + 나머지 고정비
+const wage = p.hasWage ? (p.avgWage * p.heads) : 0;
+const office = p.hasOffice ? state.fixed.office : 0;
+const leaseFix = p.hasLease ? state.fixed.leaseMonthly * p.leaseCnt : 0;
+const fixed = p.server + wage + office + state.fixed.mkt + state.fixed.legal + leaseFix;
+
+
+const net = (subRev + prtRev - varCost) - fixed;
+
+
+months.push({month:m, mau, subRev, prtRev, rev:subRev+prtRev, varCost, fixed, net, ratios:{sub:p.subCR, prt:p.prtCR}});
+}
+
+
+// 누적/최저/흑자전환
+let cum=0, minCum=0, minCumMonth=0, bepMonth:number|undefined=undefined;
+months.forEach(r=>{ cum+=r.net; r.cum=cum; if(cum<minCum){ minCum=cum; minCumMonth=r.month; } if(bepMonth===undefined && r.cum>=0) bepMonth=r.month; });
+
+
+return {months, minCum, minCumMonth, bepMonth};
 }
 
 function calcScenarioYears(state:any){
-  // 중립(원본) 월 시뮬
-  const neuMonths = calcMonthlySeries(state).months;
+// 중립(원본) 월 시뮬
+const beta = state.sensitivity?.beta ?? 0.6;
+const gamma = state.sensitivity?.gamma ?? 0.4;
+const neuMonths = calcMonthlySeries(state, 1.0, beta, gamma).months;
 
-  const sumYear = (months:any[], y:number)=>{
-    const start = (y-1)*12, end = y*12;
-    return months
-      .filter(m => m.month > start && m.month <= end)
-      .reduce((acc, r)=> acc + r.net, 0);
-  };
 
-  const neu = [1,2,3].map(y=>({ year:y, net: sumYear(neuMonths, y) }));
+const sumYear = (months:any[], y:number)=>{
+const start = (y-1)*12, end = y*12;
+return months
+.filter(m => m.month > start && m.month <= end)
+.reduce((acc, r)=> acc + r.net, 0);
+};
 
-  // 가정치를 스케일링한 상태로 다시 월 시뮬
-  const w = state.weights;
 
-  const conMonths = calcMonthlySeries(adjustStateForScenario(state, w.con)).months;
-  const conservative = [1,2,3].map(y=>({ year:y, net: sumYear(conMonths, y) }));
+const neu = [1,2,3].map(y=>({ year:y, net: sumYear(neuMonths, y) }));
 
-  const aggMonths = calcMonthlySeries(adjustStateForScenario(state, w.agg)).months;
-  const aggressive  = [1,2,3].map(y=>({ year:y, net: sumYear(aggMonths, y) }));
 
-  return { neutral: neu, conservative, aggressive };
+// 가정치를 스케일링한 상태로 다시 월 시뮬
+const w = state.weights;
+const conMonths = calcMonthlySeries(adjustStateForScenario(state, w.con, beta, gamma), 1.0, beta, gamma).months;
+const conservative = [1,2,3].map(y=>({ year:y, net: sumYear(conMonths, y) }));
+
+
+const aggMonths = calcMonthlySeries(adjustStateForScenario(state, w.agg, beta, gamma), 1.0, beta, gamma).months;
+const aggressive = [1,2,3].map(y=>({ year:y, net: sumYear(aggMonths, y) }));
+
+
+return { neutral: neu, conservative, aggressive };
 }
 
 
