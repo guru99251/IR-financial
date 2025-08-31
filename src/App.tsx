@@ -59,17 +59,42 @@ function uid(){ return Math.random().toString(36).slice(2,9); }
 const STORE_KEY = 'lm_fin_cases_v7';
 
 const defaultState = {
-  name: "Case A (MVP 예시)",
-  pricing:{ standard:9_900, pro:14_900 },
-  print:{ price:20_000, outsUnit:12_000, outsRate:1.0, leaseUnit:8_000, leaseRate:1.0 },
-  fixed:{ office:1_500_000, mkt:1_000_000, legal:300_000, leaseMonthly:2_000_000 },
-  weights:{ con:0.7, neu:1.0, agg:1.3 },
-  periods:[
-    {id:uid(),start:1,end:3,mau:300, subCR:0.03,  prtCR:0.05,  server:500_000, hasWage:false,avgWage:3_000_000,heads:0,hasOffice:false,hasLease:false,leaseCnt:0},
-    {id:uid(),start:4,end:6,mau:500, subCR:0.032, prtCR:0.055, server:600_000, hasWage:false,avgWage:3_000_000,heads:0,hasOffice:false,hasLease:false,leaseCnt:0},
-    {id:uid(),start:7,end:12,mau:1000,subCR:0.035, prtCR:0.06,  server:800_000, hasWage:true, avgWage:3_200_000,heads:3,hasOffice:true, hasLease:true, leaseCnt:1},
-  ]
+  name: "Case A (default)",
+
+  // 요금/단가
+  pricing: { standard: 7_900, pro: 0 },          // pro 안 쓰면 0 유지
+  print: {
+    price: 40_000,                               // 인쇄 객단가
+    outsUnit: 15_000, outsRate: 1,               // 외주 원가(건), 배수
+    leaseUnit: 7_000,  leaseRate: 1              // 리스 원가(건), 배수
+  },
+
+  // 고정비
+  fixed: {
+    office: 1_200_000,                           // 사무실 비용(월)
+    mkt:    2_000_000,                           // 마케팅 비용(월)
+    legal:    500_000,                           // 법률/회계 비용(월)
+    leaseMonthly: 3_000_000                      // 리스 월 금액(장비 1대)
+  },
+
+  // 시나리오 가중치
+  weights: { con: 0.7, neu: 1.0, agg: 1.3 },
+
+  // 활성 사용자 시나리오 (기간별)
+  // 퍼센트는 "소수(0~1)"로 입력해야 합니다.
+  periods: [
+    { id: uid(), start: 1,  end: 3,  mau: 300,   subCR: 0.00, prtCR: 0.10, server: 300_000, hasWage: false, avgWage: 0,        heads: 4, hasOffice: false, hasLease: false, leaseCnt: 0 },
+    { id: uid(), start: 4,  end: 6,  mau: 500,   subCR: 0.00, prtCR: 0.15, server: 400_000, hasWage: false, avgWage: 0,        heads: 4, hasOffice: false, hasLease: false, leaseCnt: 0 },
+    { id: uid(), start: 7,  end: 9,  mau: 600,   subCR: 0.03, prtCR: 0.15, server: 500_000, hasWage: true,  avgWage: 2_200_000, heads: 4, hasOffice: true,  hasLease: false, leaseCnt: 0 },
+    { id: uid(), start: 10, end: 12, mau: 800,   subCR: 0.03, prtCR: 0.15, server: 800_000, hasWage: true,  avgWage: 2_200_000, heads: 4, hasOffice: true,  hasLease: false, leaseCnt: 0 },
+    { id: uid(), start: 13, end: 18, mau: 2_500, subCR: 0.03, prtCR: 0.12, server: 1_700_000, hasWage: true, avgWage: 2_500_000, heads: 5, hasOffice: true, hasLease: true,  leaseCnt: 1 },
+    { id: uid(), start: 19, end: 21, mau: 7_500, subCR: 0.04, prtCR: 0.08, server: 3_000_000, hasWage: true, avgWage: 3_000_000, heads: 5, hasOffice: true, hasLease: true,  leaseCnt: 1 },
+    { id: uid(), start: 22, end: 24, mau: 12_000, subCR: 0.05, prtCR: 0.07, server: 4_400_000, hasWage: true, avgWage: 3_500_000, heads: 6, hasOffice: true, hasLease: true,  leaseCnt: 2 },
+    { id: uid(), start: 25, end: 30, mau: 30_000, subCR: 0.05, prtCR: 0.07, server: 7_500_000, hasWage: true, avgWage: 3_500_000, heads: 6, hasOffice: true, hasLease: true,  leaseCnt: 2 },
+    { id: uid(), start: 31, end: 36, mau: 50_000, subCR: 0.05, prtCR: 0.08, server: 13_000_000, hasWage: true, avgWage: 4_000_000, heads: 7, hasOffice: true, hasLease: true, leaseCnt: 3 },
+  ],
 };
+
 
 /*************************
  * 메인 컴포넌트
