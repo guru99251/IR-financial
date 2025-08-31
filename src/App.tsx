@@ -52,24 +52,26 @@ const KRW = {
   pctFmt(p: number){ return (p*100).toFixed(1).replace(/\.0$/,'')+'%'; }
 }
 
-// --- scenario utils ---
+// 가중치 적용 유틸
 const clamp01 = (v:number)=> Math.max(0, Math.min(1, v));
 
-function adjustStateForScenario(base:any, mult:number){
-  const β = 0.6;   // 전환율 민감도 (0~1)
-  const γ = 0.4;   // 서버비 규모효율 (0~1)
-
-  const periods = base.periods.map((p:any)=>({
+/** 기간 가정에 가중치(mult)를 적용: MAU↑, 전환율↑, 서버비↓(규모효율) */
+function adjustPeriodByWeight(p:any, mult:number, beta=0.6, gamma=0.4){
+  return {
     ...p,
     mau: Math.max(0, Math.round(p.mau * mult)),
-    subCR: clamp01(p.subCR * (1 + β*(mult - 1))),
-    prtCR: clamp01(p.prtCR * (1 + β*(mult - 1))),
-    server: Math.max(0, Math.round(p.server * (1 - γ*(mult - 1)))),
-  }));
-
-  return { ...base, periods };
+    subCR: clamp01(p.subCR * (1 + beta*(mult - 1))),
+    prtCR: clamp01(p.prtCR * (1 + beta*(mult - 1))),
+    server: Math.max(0, Math.round(p.server * (1 - gamma*(mult - 1)))),
+  };
 }
 
+function adjustStateForScenario(base:any, mult:number){
+  return {
+    ...base,
+    periods: base.periods.map((p:any)=>adjustPeriodByWeight(p, mult))
+  };
+}
 
 /*************************
  * 초기 상태
@@ -119,13 +121,18 @@ const defaultState = {
  *************************/
 export default function FinancialCalculatorApp(){
   const [state,setState] = useState(defaultState);
+  const [scenario, setScenario] = useState<'con'|'neu'|'agg'>('neu');
+  const scenarioMult = state.weights[scenario];
   const [caseList,setCaseList] = useState<any[]>(()=>JSON.parse(localStorage.getItem(STORE_KEY)||'[]'));
   const [periodDraft,setPeriodDraft] = useState({start:1,end:3,mau:300});
   const [tab,setTab] = useState("sum");
-  const [simTick,setSimTick] = useState(0); // "시뮬레이션하기" 동작 트리거
+  const [simTick,setSimTick] = useState(0);
 
   // 계산 결과
-  const { months, minCum, minCumMonth, bepMonth } = useMemo(()=>calcMonthlySeries(state),[state, simTick]);
+  const { months, minCum, minCumMonth, bepMonth } = useMemo(
+    ()=>calcMonthlySeries(state, scenarioMult),
+    [state, scenarioMult, simTick]
+  );
   const needed = useMemo(()=>calcNeededFund(months),[months]);
   const totalInvestNeed = Math.max(0, needed.maxDeficit * 1.10);
 
@@ -425,6 +432,28 @@ export default function FinancialCalculatorApp(){
             <Button className="gap-2" onClick={runSimulation}><Rocket className="w-4 h-4"/> 시뮬레이션하기</Button>
           </CardFooter>
         </Card>
+
+
+        {/* 결과 상단 탭 옆에 시나리오 선택 */}
+        <div className="flex items-center gap-2">
+          <div className="inline-flex rounded-xl bg-slate-100 p-1 shadow-inner">
+            <button
+              className={`px-3 py-1.5 rounded-lg text-sm ${scenario==='con'?'bg-white shadow text-slate-900':'text-slate-600'}`}
+              onClick={()=>setScenario('con')}
+              type="button"
+            >보수</button>
+            <button
+              className={`px-3 py-1.5 rounded-lg text-sm ${scenario==='neu'?'bg-white shadow text-slate-900':'text-slate-600'}`}
+              onClick={()=>setScenario('neu')}
+              type="button"
+            >중립</button>
+            <button
+              className={`px-3 py-1.5 rounded-lg text-sm ${scenario==='agg'?'bg-white shadow text-slate-900':'text-slate-600'}`}
+              onClick={()=>setScenario('agg')}
+              type="button"
+            >공격</button>
+          </div>
+        </div>
 
         {/* (3) 시뮬레이션 결과 */}
         <SectionTitle icon={<BarChart3 className="w-4 h-4"/>}
@@ -984,10 +1013,14 @@ function mergeRanges(ranges:number[][]){
   return res;
 }
 
-function calcMonthlySeries(state:any){
-  const periods = [...state.periods].sort((a,b)=>a.start-b.start);
+function calcMonthlySeries(state:any, mult:number=1.0){
+  // 1) 가중치 적용된 기간 목록
+  const basePeriods = [...state.periods].sort((a,b)=>a.start-b.start);
+  const periods = basePeriods.map(p=>adjustPeriodByWeight(p, mult)); // ← 가중치 반영
+
   const maxEnd = periods.reduce((m:number,p:any)=>Math.max(m,p.end),0);
   const months:any[] = [];
+
   const stdPrice = state.pricing.standard;
   const printPrice = state.print.price;
   const outsCost = state.print.outsUnit * state.print.outsRate;
@@ -997,13 +1030,17 @@ function calcMonthlySeries(state:any){
 
   for(let m=1; m<=maxEnd; m++){
     const pIdx = periods.findIndex((pp:any)=>m>=pp.start && m<=pp.end);
-    if(pIdx<0){ months.push({month:m, rev:0, subRev:0, prtRev:0, varCost:0, fixed:0, op:0, net:0, mau:0, ratios:{sub:0,prt:0}}); continue; }
+    if(pIdx<0){
+      months.push({month:m, rev:0, subRev:0, prtRev:0, varCost:0, fixed:0, net:0, mau:0, cum:0, ratios:{sub:0,prt:0}});
+      continue;
+    }
     const p = periods[pIdx];
+
+    // 선형 증가: 이전 구간의 "가중치 적용 후 MAU"를 기준으로 현재 구간 목표까지 선형
     const prevTarget = (pIdx>0)? periods[pIdx-1].mau : p.mau; // 첫 구간은 자기 목표
     const periodLen = (p.end - p.start + 1);
     const step = (p.mau - prevTarget) / periodLen;
 
-    // 월별 MAU: 첫 구간은 고정, 이후 구간은 선형 증가
     const mau = (pIdx===0)? p.mau : Math.max(0, Math.round(lastMAU + step));
     lastMAU = mau;
 
@@ -1011,20 +1048,24 @@ function calcMonthlySeries(state:any){
     const prtOrders = mau * p.prtCR; // 1인 1주문 가정
     const subRev = subUsers * stdPrice;
     const prtRev = prtOrders * printPrice;
+
     const varCost = prtOrders * (p.hasLease? leaseCost : outsCost);
-    const contribution = subRev + prtRev - varCost;
+
+    // 고정비: 서버(가중치 반영됨) + 나머지(사무실/인건비/리스 등은 그대로)
     const wage = p.hasWage ? (p.avgWage * p.heads) : 0;
     const office = p.hasOffice ? state.fixed.office : 0;
     const leaseFix = p.hasLease ? state.fixed.leaseMonthly * p.leaseCnt : 0;
     const fixed = p.server + wage + office + state.fixed.mkt + state.fixed.legal + leaseFix;
-    const net = contribution - fixed;
 
-    months.push({month:m,mau,subRev,prtRev,rev:subRev+prtRev,varCost,fixed,net,ratios:{sub:p.subCR,prt:p.prtCR}});
+    const net = (subRev + prtRev - varCost) - fixed;
+
+    months.push({month:m, mau, subRev, prtRev, rev:subRev+prtRev, varCost, fixed, net, ratios:{sub:p.subCR, prt:p.prtCR}});
   }
 
-  // 누적 및 BEP
+  // 누적/최저/흑자전환
   let cum=0, minCum=0, minCumMonth=0, bepMonth:number|undefined=undefined;
   months.forEach(r=>{ cum+=r.net; r.cum=cum; if(cum<minCum){ minCum=cum; minCumMonth=r.month; } if(bepMonth===undefined && r.cum>=0) bepMonth=r.month; });
+
   return {months, minCum, minCumMonth, bepMonth};
 }
 
