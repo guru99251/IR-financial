@@ -14,6 +14,26 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 // Chart.js (no styles required, accessible colors come from default palette)
 import Chart from "chart.js/auto";
+import type { Chart as ChartType } from "chart.js";
+
+
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  "https://irqvbemferrqxzbzhjwh.supabase.co",
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlycXZiZW1mZXJycXh6YnpoandoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTY2MzQzNjksImV4cCI6MjA3MjIxMDM2OX0.nZX_EGJ_6dFbmX7sO5Yp98_d4-HSfjLBUcd7H9b4xzo"
+);
+
+async function saveCaseToServer(caseData: any) {
+  const { data, error } = await supabase.from("cases").insert([caseData]);
+  if (error) console.error(error);
+}
+
+async function loadCasesFromServer() {
+  const { data, error } = await supabase.from("cases").select("*");
+  return data || [];
+}
+
 
 /*************************
  * 통화/퍼센트 유틸
@@ -85,49 +105,81 @@ export default function FinancialCalculatorApp(){
   const totalInvestNeed = Math.max(0, needed.maxDeficit * 1.10);
 
   // Charts
-  const cumRef = useRef(null), monthlyRef = useRef(null), scRef = useRef(null);
-  const cumChart = useRef(null), monthlyChart=useRef(null), scChart=useRef(null);
+  const cumRef = useRef<HTMLCanvasElement | null>(null);
+  const monthlyRef = useRef<HTMLCanvasElement | null>(null);
+  const scRef = useRef<HTMLCanvasElement | null>(null);
 
-  useEffect(()=>{
-    const labels = months.map(r=>`${r.month}M`);
-    const yFmt = (v)=>KRW.fmt(v);
+  const cumChart = useRef<ChartType | null>(null);
+  const monthlyChart = useRef<ChartType | null>(null);
+  const scChart = useRef<ChartType | null>(null);
 
-    // 누적손익
-    if(cumChart.current){ cumChart.current.destroy(); }
-    if(cumRef.current){
-      cumChart.current = new Chart(cumRef.current, {
-        type:'line', data:{ labels, datasets:[{ label:'누적손익', data:months.map(r=>r.cum) }] },
-        options:{ responsive:true, plugins:{ legend:{ display:false }}, scales:{ y:{ ticks:{ callback:yFmt }}}}
-      })
-    }
 
-    // 월 매출/비용
-    if(monthlyChart.current){ monthlyChart.current.destroy(); }
-    if(monthlyRef.current){
-      monthlyChart.current = new Chart(monthlyRef.current, {
-        type:'line', data:{ labels, datasets:[
-          { label:'매출', data:months.map(r=>r.rev) },
-          { label:'변동비', data:months.map(r=>r.varCost) },
-          { label:'고정비', data:months.map(r=>r.fixed) },
-          { label:'순이익', data:months.map(r=>r.net) },
-        ]}, options:{ responsive:true, scales:{ y:{ ticks:{ callback:yFmt }}} }
-      })
-    }
+useEffect(() => {
+  const labels = months.map(r => `${r.month}M`);
+  const yFmt = (v: number) => KRW.fmt(v);
 
-    // 연도별 시나리오
-    if(scChart.current){ scChart.current.destroy(); }
-    if(scRef.current){
-      const sc = calcScenarioYears(state);
-      const yLabels = sc.neutral.map(r=>`Y${r.year}`);
-      scChart.current = new Chart(scRef.current, {
-        type:'bar', data:{ labels:yLabels, datasets:[
-          { label:'보수적 순이익', data:sc.conservative.map(r=>r.net) },
-          { label:'중립 순이익', data:sc.neutral.map(r=>r.net) },
-          { label:'공격적 순이익', data:sc.aggressive.map(r=>r.net) },
-        ]}, options:{ responsive:true, scales:{ y:{ ticks:{ callback:yFmt }}} }
-      })
-    }
-  },[months, state]);
+  // 누적 손익
+  if (cumChart.current) cumChart.current.destroy();
+  if (cumRef.current) {
+    cumChart.current = new Chart(cumRef.current, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [{ label: "누적손익", data: months.map(r => r.cum) }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: { y: { ticks: { callback: yFmt } } }
+      }
+    });
+  }
+
+  // 월 매출/비용
+  if (monthlyChart.current) monthlyChart.current.destroy();
+  if (monthlyRef.current) {
+    monthlyChart.current = new Chart(monthlyRef.current, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          { label: "매출", data: months.map(r => r.rev) },
+          { label: "변동비", data: months.map(r => r.varCost) },
+          { label: "고정비", data: months.map(r => r.fixed) },
+          { label: "순이익", data: months.map(r => r.net) }
+        ]
+      },
+      options: { responsive: true, scales: { y: { ticks: { callback: yFmt } } } }
+    });
+  }
+
+  // 연도별 시나리오
+  if (scChart.current) scChart.current.destroy();
+  if (scRef.current) {
+    const sc = calcScenarioYears(state);
+    const yLabels = sc.neutral.map(r => `Y${r.year}`);
+    scChart.current = new Chart(scRef.current, {
+      type: "bar",
+      data: {
+        labels: yLabels,
+        datasets: [
+          { label: "보수적 순이익", data: sc.conservative.map(r => r.net) },
+          { label: "중립 순이익", data: sc.neutral.map(r => r.net) },
+          { label: "공격적 순이익", data: sc.aggressive.map(r => r.net) }
+        ]
+      },
+      options: { responsive: true, scales: { y: { ticks: { callback: yFmt } } } }
+    });
+  }
+
+  // (선택) 언마운트/재렌더 시 Chart 메모리 정리
+  return () => {
+    cumChart.current?.destroy();
+    monthlyChart.current?.destroy();
+    scChart.current?.destroy();
+  };
+}, [months, state]);
+
 
   // 저장/불러오기
   const saveCase = ()=>{
