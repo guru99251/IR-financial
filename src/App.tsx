@@ -426,111 +426,133 @@ export default function FinancialCalculatorApp(){
           </CardFooter>
         </Card>
 
-        {/* (3) 결과 */}
-        <SectionTitle icon={<BarChart3 className="w-4 h-4" />} title="③ 시뮬레이션 (결과)" subtitle="요약 · 차트 · 표" />
+        {/* (3) 시뮬레이션 결과 */}
+        <SectionTitle icon={<BarChart3 className="w-4 h-4"/>}
+          title="③ 시뮬레이션 (결과)" subtitle="요약 · 차트 · 표"/>
 
-        {/* KPI 대시보드 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mt-3">
-          <StatCard
-            title="BEP 시기"
-            value={bepMonth ? `${bepMonth}` : '—'}
-            unit="개월차"
-            tone={bepMonth ? 'good' : 'muted'}
-          />
-          <StatCard
-            title="누적 적자 최대"
-            value={minCum < 0 ? KRW.fmt(-minCum) : '—'}
-            unit={minCum < 0 ? `(@ ${minCumMonth}개월차)` : ''}
-            tone={minCum < 0 ? 'bad' : 'muted'}
-          />
-          <StatCard
-            title="최종 ROI"
-            value={
-              (() => {
-                const totalNet = months.reduce((a, b) => a + b.net, 0);
-                const roi = totalInvestNeed > 0 ? (totalNet / totalInvestNeed) * 100 : 0;
-                return `${roi.toFixed(1)}%`;
-              })()
-            }
-            tone="good"
-          />
-          <StatCard
-            title="총 필요 투자금 (예비비 포함)"
-            value={KRW.fmt(totalInvestNeed)}
-            tone="muted"
-          />
+        {/* 상단 탭: pill 스타일 */}
+        <div className="flex items-center justify-between">
+          <Pills>
+            <PillBtn active={tab==="sum"}   onClick={()=>setTab("sum")}>요약보기</PillBtn>
+            <PillBtn active={tab==="chart"} onClick={()=>setTab("chart")}>차트보기</PillBtn>
+            <PillBtn active={tab==="table"} onClick={()=>setTab("table")}>표보기</PillBtn>
+          </Pills>
+          <Button className="gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700"
+                  onClick={()=>{ setSimTick(t=>t+1); if(tab!=="chart") setTab("chart"); }}>
+            <Rocket className="w-4 h-4"/> 시뮬레이션 실행
+          </Button>
         </div>
 
-        {/* 문장형 요약 */}
-        <KPIHeader
-          label="요약"
-          text={
-            bepMonth
-              ? `현재 가정에서는 약 ${bepMonth}개월차에 손익분기점을 달성합니다. 최대 적자는 ${minCumMonth}개월차에 ${KRW.fmt(-minCum)} 수준으로 예상되며, 이를 기준으로 총 필요 투자금(예비비 포함)은 ${KRW.fmt(totalInvestNeed)}입니다.`
-              : `현재 가정에서는 시뮬레이션 구간 내 BEP를 달성하지 못합니다. 전환율, MAU, 비용 가정치를 조정해 보세요.`
-          }
-        />
+        {/* ① 요약보기 */}
+        {tab==="sum" && (
+          <div className="pt-6 space-y-6">
+            {/* 핵심 KPI */}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+              <ResultCard label="BEP 시기"
+                value={bepMonth ? `${bepMonth}개월차` : "미달성"}
+                tone={bepMonth ? "positive" : "negative"} />
 
-        {/* 차트/표 탭 — 로직 그대로, UI만 경량 가독성 */}
-        <Tabs value={tab} onValueChange={setTab} className="w-full mt-2">
-          <TabsList className="grid grid-cols-3 w-full md:w-auto">
-            <TabsTrigger value="chart">차트보기</TabsTrigger>
-            <TabsTrigger value="table">표보기</TabsTrigger>
-            <TabsTrigger value="sum">세부요약</TabsTrigger>
-          </TabsList>
+              <ResultCard label="누적적자 최대"
+                value={KRW.fmt(Math.min(0, minCum))}
+                sub={minCumMonth ? `${minCumMonth}개월차` : "-"}
+                tone={minCum < 0 ? "negative" : "positive"} />
 
-          {/* 차트 */}
-          <TabsContent value="chart" className="pt-4">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <ChartCard title="누적 손익">
-                <canvas ref={cumRef} className="w-full h-full" role="img" aria-label="누적 손익 라인 차트" />
-              </ChartCard>
-              <ChartCard title="월 매출 · 비용">
-                <canvas ref={monthlyRef} className="w-full h-full" role="img" aria-label="월 매출·비용 라인 차트" />
-              </ChartCard>
-              <ChartCard title="연도별 시나리오 (보수/중립/공격)">
-                <canvas ref={scRef} className="w-full h-full" role="img" aria-label="시나리오 바 차트" />
-              </ChartCard>
+              <ResultCard label="최종 ROI"
+                value={`${(((months.reduce((a,b)=>a+b.net,0)) / (totalInvestNeed||1))*100).toFixed(1)}%`}
+                tone="accent" />
             </div>
-          </TabsContent>
 
-          {/* 표 */}
-          <TabsContent value="table" className="pt-4 space-y-4">
+            {/* 필요 투자금 카드 */}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+              <ResultCard label="필요 투자금 (6개월)"
+                value={KRW.fmt(needed.need6*1.10)} />
+              <ResultCard label="필요 투자금 (12개월)"
+                value={KRW.fmt(needed.need12*1.10)} />
+              <ResultCard label="필요 투자금 (24개월)"
+                value={KRW.fmt(needed.need24*1.10)} />
+            </div>
+
+            {/* 총 필요 투자금 + 배분 */}
+            <div className="rounded-2xl border border-slate-200 bg-white/95 p-6 shadow-sm">
+              <div className="flex items-baseline justify-between gap-4">
+                <div>
+                  <p className="text-xs font-medium tracking-wide text-slate-500">총 필요 투자금 (예비비 포함)</p>
+                  <p className="text-3xl font-extrabold text-indigo-600 mt-1">{KRW.fmt(totalInvestNeed)}</p>
+                </div>
+                <div className="grid grid-cols-3 gap-6">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-indigo-600">70%</div>
+                    <div className="text-xs text-slate-500">Angel/VC</div>
+                    <div className="text-xs text-slate-700 mt-1">
+                      {KRW.fmt(totalInvestNeed*0.70)}
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-emerald-600">20%</div>
+                    <div className="text-xs text-slate-500">Government</div>
+                    <div className="text-xs text-slate-700 mt-1">
+                      {KRW.fmt(totalInvestNeed*0.20)}
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-amber-600">10%</div>
+                    <div className="text-xs text-slate-500">Founder</div>
+                    <div className="text-xs text-slate-700 mt-1">
+                      {KRW.fmt(totalInvestNeed*0.10)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {officeOffRanges.length>0 && (
+                <p className="mt-4 text-sm text-amber-700 flex items-center gap-2">
+                  <Building2 className="w-4 h-4"/>
+                  사무실 비용 제외 구간 {officeOffRanges.map(r=>`${r[0]}~${r[1]}개월차`).join(', ')} 은(는) 공간 지원 필요.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ② 차트보기 */}
+        {tab==="chart" && (
+          <div className="pt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <ChartCard title="누적 손익">
+              <canvas ref={cumRef} className="w-full h-full" role="img" aria-label="누적 손익 라인 차트"/>
+            </ChartCard>
+            <ChartCard title="월 매출 · 비용">
+              <canvas ref={monthlyRef} className="w-full h-full" role="img" aria-label="월 매출·비용 라인 차트"/>
+            </ChartCard>
+            <ChartCard title="연도별 시나리오 (보수/중립/공격)">
+              <canvas ref={scRef} className="w-full h-full" role="img" aria-label="시나리오 바 차트"/>
+            </ChartCard>
+          </div>
+        )}
+
+        {/* ③ 표보기 */}
+        {tab==="table" && (
+          <div className="pt-6 space-y-6">
             <HoverCard>
               <CardHeader><CardTitle className="text-sm text-slate-600">구간별 월 발생비용</CardTitle></CardHeader>
-              <CardContent><CostByPeriodTable state={state} /></CardContent>
+              <CardContent><CostByPeriodTable state={state}/></CardContent>
             </HoverCard>
             <HoverCard>
               <CardHeader><CardTitle className="text-sm text-slate-600">MAU별 BEP (200명 단위)</CardTitle></CardHeader>
-              <CardContent><BEPTable state={state} /></CardContent>
+              <CardContent><BEPTable state={state}/></CardContent>
             </HoverCard>
             <HoverCard>
               <CardHeader><CardTitle className="text-sm text-slate-600">누적손익 (월별)</CardTitle></CardHeader>
-              <CardContent><MonthlyTable months={months} /></CardContent>
+              <CardContent><MonthlyTable months={months}/></CardContent>
             </HoverCard>
             <HoverCard>
-              <CardHeader><CardTitle className="text-sm text-slate-600">1~3년차 시나리오별 순이익</CardTitle></CardHeader>
-              <CardContent><YearlyTable state={state} /></CardContent>
+              <CardHeader><CardTitle className="text-sm text-slate-600">1~3년차 시나리오별 매출/이익</CardTitle></CardHeader>
+              <CardContent><YearlyTable state={state}/></CardContent>
             </HoverCard>
-          </TabsContent>
-
-          {/* 세부요약 — KPI를 보완하는 텍스트 섹션 */}
-          <TabsContent value="sum" className="pt-4">
-            <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5 leading-relaxed text-slate-700">
-              <ul className="list-disc pl-5 space-y-2 text-sm">
-                <li>전환율·MAU·서버비 가정치는 <b>② 활성 사용자 시나리오</b>에서 직접 조정할 수 있습니다.</li>
-                <li>공격적/보수적 시나리오는 <b>가정치 스케일링</b>으로 산출되며(전환율↑/MAU↑/서버비↓), 차트의 연도별 막대 그래프에서 비교할 수 있습니다.</li>
-                <li>필요 투자금은 최대 적자 시점 기준에 10% 예비비를 포함해 추정합니다.</li>
-                <li>CSV 내보내기 버튼으로 월별 데이터를 내려받아 2차 가공이 가능합니다.</li>
-              </ul>
-              <div className="mt-3">
-                <Button variant="outline" className="gap-2" onClick={() => exportCSV(months)}>
-                  <Download className="w-4 h-4" /> CSV 내보내기
-                </Button>
-              </div>
-            </div>
-          </TabsContent>
-        </Tabs>
+            <HoverCard>
+              <CardHeader><CardTitle className="text-sm text-slate-600">투자금 재무 운용 (최대 적자 시점까지)</CardTitle></CardHeader>
+              <CardContent><FundingTable state={state} months={months} minCumMonth={minCumMonth}/></CardContent>
+            </HoverCard>
+          </div>
+        )}
       </main>
 
       <footer className="py-8 text-center text-xs text-slate-500">
@@ -577,13 +599,16 @@ function KPI({label,value}:{label:string,value:string}){
 function ChartCard({title,children}:{title:string,children:React.ReactNode}){
   return (
     <HoverCard>
-      <CardHeader className="pb-2"><CardTitle className="text-sm text-slate-600">{title}</CardTitle></CardHeader>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm text-slate-600">{title}</CardTitle>
+      </CardHeader>
       <CardContent>
-        <div className="relative h-72">{children}</div>
+        <div className="relative h-80">{children}</div> {/* h-80 */}
       </CardContent>
     </HoverCard>
-  )
+  );
 }
+
 
 function MoneyInput({label,value,onChange}:{label:string,value:number,onChange:(v:number)=>void}){
   const [raw,setRaw] = useState(String(value));
@@ -605,51 +630,43 @@ function NumberInput({label,value,onChange}:{label:string,value:number,onChange:
   )
 }
 
-function StatCard({
-  title,
-  value,
-  unit,
-  tone = 'muted',
-}: {
-  title: string;
-  value: string;
-  unit?: string;
-  tone?: 'good' | 'bad' | 'muted';
-}) {
-  const toneCls =
-    tone === 'good'
-      ? 'text-emerald-600'
-      : tone === 'bad'
-      ? 'text-rose-600'
-      : 'text-slate-700';
-  const unitCls = 'text-xs text-slate-500 ml-1';
+/** 결과 카드 — 레이블/값 대비가 높은 카드 */
+function ResultCard({
+  label, value, sub, tone = "default"
+}: {label: string; value: React.ReactNode; sub?: React.ReactNode; tone?: "default"|"positive"|"negative"|"accent"}) {
+  const toneClass =
+    tone === "positive" ? "text-emerald-600"
+    : tone === "negative" ? "text-rose-600"
+    : tone === "accent"   ? "text-indigo-600"
+    : "text-slate-900";
   return (
-    <motion.div whileHover={{ scale: 1.01 }}>
-      <Card className="rounded-2xl shadow-sm border-slate-200">
-        <CardHeader className="pb-1">
-          <CardTitle className="text-xs text-slate-500">{title}</CardTitle>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <div className={`font-bold ${toneCls} text-2xl md:text-3xl tracking-tight`}>
-            {value}
-            {unit ? <span className={unitCls}>{unit}</span> : null}
-          </div>
-        </CardContent>
-      </Card>
-    </motion.div>
-  );
-}
-
-function KPIHeader({ label, text }: { label: string; text: string }) {
-  return (
-    <div className="mt-4">
-      <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">{label}</div>
-      <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm text-slate-700">
-        {text}
-      </div>
+    <div className="rounded-2xl border border-slate-200 bg-white/90 p-5 shadow-sm hover:shadow transition-shadow">
+      <p className="text-xs font-medium tracking-wide text-slate-500 mb-2">{label}</p>
+      <div className={`text-2xl font-bold leading-none ${toneClass}`}>{value}</div>
+      {sub && <p className="mt-2 text-xs text-slate-400">{sub}</p>}
     </div>
   );
 }
+
+/** 탭 버튼 그룹 — 레퍼런스 HTML의 pill 스타일을 반영 */
+function Pills({children}:{children:React.ReactNode}) {
+  return (
+    <div className="inline-flex rounded-xl bg-slate-100 p-1 shadow-inner">{children}</div>
+  );
+}
+function PillBtn({active, children, onClick}:{active?:boolean; children:React.ReactNode; onClick?:()=>void}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors
+        ${active ? "bg-white shadow text-slate-900" : "text-slate-600 hover:text-slate-900"}`}
+      type="button"
+    >
+      {children}
+    </button>
+  );
+}
+
 
 /*************************
  * 표들
