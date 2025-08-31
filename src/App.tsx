@@ -52,6 +52,25 @@ const KRW = {
   pctFmt(p: number){ return (p*100).toFixed(1).replace(/\.0$/,'')+'%'; }
 }
 
+// --- scenario utils ---
+const clamp01 = (v:number)=> Math.max(0, Math.min(1, v));
+
+function adjustStateForScenario(base:any, mult:number){
+  const β = 0.6;   // 전환율 민감도 (0~1)
+  const γ = 0.4;   // 서버비 규모효율 (0~1)
+
+  const periods = base.periods.map((p:any)=>({
+    ...p,
+    mau: Math.max(0, Math.round(p.mau * mult)),
+    subCR: clamp01(p.subCR * (1 + β*(mult - 1))),
+    prtCR: clamp01(p.prtCR * (1 + β*(mult - 1))),
+    server: Math.max(0, Math.round(p.server * (1 - γ*(mult - 1)))),
+  }));
+
+  return { ...base, periods };
+}
+
+
 /*************************
  * 초기 상태
  *************************/
@@ -81,17 +100,16 @@ const defaultState = {
   weights: { con: 0.7, neu: 1.0, agg: 1.3 },
 
   // 활성 사용자 시나리오 (기간별)
-  // 퍼센트는 "소수(0~1)"로 입력해야 합니다.
   periods: [
     { id: uid(), start: 1,  end: 3,  mau: 300,   subCR: 0.00, prtCR: 0.10, server: 300_000, hasWage: false, avgWage: 0,        heads: 4, hasOffice: false, hasLease: false, leaseCnt: 0 },
     { id: uid(), start: 4,  end: 6,  mau: 500,   subCR: 0.00, prtCR: 0.15, server: 400_000, hasWage: false, avgWage: 0,        heads: 4, hasOffice: false, hasLease: false, leaseCnt: 0 },
-    { id: uid(), start: 7,  end: 9,  mau: 600,   subCR: 0.03, prtCR: 0.15, server: 500_000, hasWage: true,  avgWage: 2_200_000, heads: 4, hasOffice: true,  hasLease: false, leaseCnt: 0 },
-    { id: uid(), start: 10, end: 12, mau: 800,   subCR: 0.03, prtCR: 0.15, server: 800_000, hasWage: true,  avgWage: 2_200_000, heads: 4, hasOffice: true,  hasLease: false, leaseCnt: 0 },
-    { id: uid(), start: 13, end: 18, mau: 2_500, subCR: 0.03, prtCR: 0.12, server: 1_700_000, hasWage: true, avgWage: 2_500_000, heads: 5, hasOffice: true, hasLease: true,  leaseCnt: 1 },
-    { id: uid(), start: 19, end: 21, mau: 7_500, subCR: 0.04, prtCR: 0.08, server: 3_000_000, hasWage: true, avgWage: 3_000_000, heads: 5, hasOffice: true, hasLease: true,  leaseCnt: 1 },
-    { id: uid(), start: 22, end: 24, mau: 12_000, subCR: 0.05, prtCR: 0.07, server: 4_400_000, hasWage: true, avgWage: 3_500_000, heads: 6, hasOffice: true, hasLease: true,  leaseCnt: 2 },
-    { id: uid(), start: 25, end: 30, mau: 30_000, subCR: 0.05, prtCR: 0.07, server: 7_500_000, hasWage: true, avgWage: 3_500_000, heads: 6, hasOffice: true, hasLease: true,  leaseCnt: 2 },
-    { id: uid(), start: 31, end: 36, mau: 50_000, subCR: 0.05, prtCR: 0.08, server: 13_000_000, hasWage: true, avgWage: 4_000_000, heads: 7, hasOffice: true, hasLease: true, leaseCnt: 3 },
+    { id: uid(), start: 7,  end: 9,  mau: 600,   subCR: 0.03, prtCR: 0.15, server: 500_000, hasWage: true,  avgWage: 2_200_000, heads: 4, hasOffice: false,  hasLease: false, leaseCnt: 0 },
+    { id: uid(), start: 10, end: 12, mau: 800,   subCR: 0.03, prtCR: 0.15, server: 800_000, hasWage: true,  avgWage: 2_200_000, heads: 4, hasOffice: false,  hasLease: false, leaseCnt: 0 },
+    { id: uid(), start: 13, end: 18, mau: 2_500, subCR: 0.03, prtCR: 0.12, server: 1_700_000, hasWage: true, avgWage: 2_500_000, heads: 4, hasOffice: false, hasLease: false,  leaseCnt: 1 },
+    { id: uid(), start: 19, end: 21, mau: 7_500, subCR: 0.04, prtCR: 0.10, server: 3_000_000, hasWage: true, avgWage: 3_000_000, heads: 5, hasOffice: true, hasLease: true,  leaseCnt: 1 },
+    { id: uid(), start: 22, end: 24, mau: 12_000, subCR: 0.05, prtCR: 0.10, server: 4_400_000, hasWage: true, avgWage: 3_500_000, heads: 5, hasOffice: true, hasLease: true,  leaseCnt: 2 },
+    { id: uid(), start: 25, end: 30, mau: 30_000, subCR: 0.05, prtCR: 0.10, server: 7_500_000, hasWage: true, avgWage: 3_500_000, heads: 6, hasOffice: true, hasLease: true,  leaseCnt: 3 },
+    { id: uid(), start: 31, end: 36, mau: 50_000, subCR: 0.05, prtCR: 0.08, server: 13_000_000, hasWage: true, avgWage: 4_000_000, heads: 6, hasOffice: true, hasLease: true, leaseCnt: 4 },
   ],
 };
 
@@ -791,17 +809,30 @@ function calcMonthlySeries(state:any){
 }
 
 function calcScenarioYears(state:any){
-  const { months } = calcMonthlySeries(state);
-  const agg = (arr:number[])=>arr.reduce((a,b)=>a+b,0);
-  const y1 = months.filter(m=>m.month<=12);
-  const y2 = months.filter(m=>m.month>12 && m.month<=24);
-  const y3 = months.filter(m=>m.month>24 && m.month<=36);
-  const neu = [y1,y2,y3].map((ys,i)=>({year:i+1, net: agg(ys.map(r=>r.net))}));
+  // 중립(원본) 월 시뮬
+  const neuMonths = calcMonthlySeries(state).months;
+
+  const sumYear = (months:any[], y:number)=>{
+    const start = (y-1)*12, end = y*12;
+    return months
+      .filter(m => m.month > start && m.month <= end)
+      .reduce((acc, r)=> acc + r.net, 0);
+  };
+
+  const neu = [1,2,3].map(y=>({ year:y, net: sumYear(neuMonths, y) }));
+
+  // 가정치를 스케일링한 상태로 다시 월 시뮬
   const w = state.weights;
-  const conservative = neu.map((r:any)=>({year:r.year, net: r.net*w.con}));
-  const aggressive = neu.map((r:any)=>({year:r.year, net: r.net*w.agg}));
+
+  const conMonths = calcMonthlySeries(adjustStateForScenario(state, w.con)).months;
+  const conservative = [1,2,3].map(y=>({ year:y, net: sumYear(conMonths, y) }));
+
+  const aggMonths = calcMonthlySeries(adjustStateForScenario(state, w.agg)).months;
+  const aggressive  = [1,2,3].map(y=>({ year:y, net: sumYear(aggMonths, y) }));
+
   return { neutral: neu, conservative, aggressive };
 }
+
 
 function calcNeededFund(months:any[]){
   let minCum = 0; let minAt = 0; let cum=0;
