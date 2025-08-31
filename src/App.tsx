@@ -97,7 +97,7 @@ const defaultState = {
   },
 
   // 시나리오 가중치
-  weights: { con: 0.7, neu: 1.0, agg: 1.3 },
+  weights: { con: 0.7, neu: 1.0, agg: 1.2 },
 
   // 활성 사용자 시나리오 (기간별)
   periods: [
