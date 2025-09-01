@@ -53,23 +53,22 @@ const KRW = {
 }
 
 // 가중치 적용 유틸
-const clamp01 = (v:number)=> Math.max(0, Math.min(1, v));0
+const clamp01 = (v:number)=> Math.max(0, Math.min(1, v));
 
 /** 기간 가정에 가중치(mult)를 적용: MAU↑, 전환율↑, 서버비↓(규모효율) */
 function adjustPeriodByWeight(p:any, mult:number, beta:number, gamma:number){
-return {
-...p,
-mau: Math.max(0, Math.round(p.mau * mult)),
-subCR: clamp01(p.subCR * (1 + beta*(mult - 1))),
-prtCR: clamp01(p.prtCR * (1 + beta*(mult - 1))),
-server: Math.max(0, Math.round(p.server * (1 - gamma*(mult - 1)))),
-};
+  return {
+    ...p,
+    mau: Math.max(0, Math.round(p.mau * mult)),
+    subCR: clamp01(p.subCR * (1 + beta*(mult - 1))),
+    prtCR: clamp01(p.prtCR * (1 + beta*(mult - 1))),
+    server: Math.max(0, Math.round(p.server * (1 - gamma*(mult - 1)))),
+  };
 }
-
 
 /** state의 periods에만 가중치(mult)를 적용해 새 state 반환 */
 function adjustStateForScenario(base:any, mult:number, beta:number, gamma:number){
-return { ...base, periods: base.periods.map((p:any)=>adjustPeriodByWeight(p, mult, beta, gamma)) };
+  return { ...base, periods: base.periods.map((p:any)=>adjustPeriodByWeight(p, mult, beta, gamma)) };
 }
 
 /*************************
@@ -82,13 +81,12 @@ const defaultState = {
   name: "Case A (default)",
   sensitivity: { beta: 0.6, gamma: 0.4 }, // ← 콤마 필수!
 
-
   // 요금/단가
   pricing: { standard: 7_900, pro: 0 }, // pro 안 쓰면 0 유지
   print: {
-  price: 40_000, // 인쇄 객단가
-  outsUnit: 15_000, outsRate: 1, // 외주 원가(건), 배수
-  leaseUnit: 7_000, leaseRate: 1 // 리스 원가(건), 배수
+    price: 40_000, // 인쇄 객단가
+    outsUnit: 15_000, outsRate: 1, // 외주 원가(건), 배수
+    leaseUnit: 7_000, leaseRate: 1 // 리스 원가(건), 배수
   },
 
   // 고정비
@@ -116,7 +114,6 @@ const defaultState = {
   ],
 };
 
-
 /*************************
  * 메인 컴포넌트
  *************************/
@@ -138,6 +135,10 @@ export default function FinancialCalculatorApp(){
       state.sensitivity?.gamma ?? 0.4
     ),
     [state, scenarioMult, simTick]
+  );
+  const monthlyFirstProfitMonth = useMemo(
+    () => months.find(m=>m.net>=0)?.month,
+    [months]
   );
   const needed = useMemo(()=>calcNeededFund(months),[months]);
   const totalInvestNeed = Math.max(0, needed.maxDeficit * 1.10);
@@ -229,6 +230,11 @@ export default function FinancialCalculatorApp(){
 
   // 헬퍼
   const officeOffRanges = mergeRanges(state.periods.filter(p=>!p.hasOffice).map(p=>[p.start,p.end]));
+
+  // 시나리오 반영 상태 (표 일부에서 사용)
+  const beta = state.sensitivity?.beta ?? 0.6;
+  const gamma = state.sensitivity?.gamma ?? 0.4;
+  const adjState = adjustStateForScenario(state, scenarioMult, beta, gamma);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-slate-50 text-slate-900">
@@ -347,20 +353,20 @@ export default function FinancialCalculatorApp(){
           </HoverCard>
 
           <HoverCard>
-          <CardHeader><CardTitle className="text-sm text-slate-600">민감도 가정치</CardTitle></CardHeader>
-          <CardContent className="grid grid-cols-2 gap-3">
-            <NumberInput
-              label="전환율 민감도 β (0~1)"
-              value={state.sensitivity?.beta ?? 0.6}
-              onChange={(v)=>setState(s=>({...s, sensitivity:{...s.sensitivity, beta: Math.max(0, Math.min(1, v||0))}}))}
-            />
-            <NumberInput
-              label="서버비 규모효율 γ (0~1)"
-              value={state.sensitivity?.gamma ?? 0.4}
-              onChange={(v)=>setState(s=>({...s, sensitivity:{...s.sensitivity, gamma: Math.max(0, Math.min(1, v||0))}}))}
-            />
-          </CardContent>
-        </HoverCard>
+            <CardHeader><CardTitle className="text-sm text-slate-600">민감도 가정치</CardTitle></CardHeader>
+            <CardContent className="grid grid-cols-2 gap-3">
+              <NumberInput
+                label="전환율 민감도 β (0~1)"
+                value={state.sensitivity?.beta ?? 0.6}
+                onChange={(v)=>setState(s=>({...s, sensitivity:{...s.sensitivity, beta: Math.max(0, Math.min(1, v||0))}}))}
+              />
+              <NumberInput
+                label="서버비 규모효율 γ (0~1)"
+                value={state.sensitivity?.gamma ?? 0.4}
+                onChange={(v)=>setState(s=>({...s, sensitivity:{...s.sensitivity, gamma: Math.max(0, Math.min(1, v||0))}}))}
+              />
+            </CardContent>
+          </HoverCard>
 
           <HoverCard>
             <CardHeader><CardTitle className="text-sm text-slate-600">기간(개월) · MAU 구간</CardTitle></CardHeader>
@@ -418,12 +424,25 @@ export default function FinancialCalculatorApp(){
                       <td className="px-3 py-2"><input type="number" className="w-full bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
                           value={p.mau}
                           onChange={(e)=>updatePeriod(idx,{mau:parseInt(e.target.value||'0')||0},setState)}/></td>
-                      <td className="px-3 py-2"><input type="number" step="0.1" className="w-full bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
-                          value={+(p.subCR*100).toFixed(2)}
-                          onChange={(e)=>updatePeriod(idx,{subCR:(parseFloat(e.target.value||'0')||0)/100},setState)}/></td>
-                      <td className="px-3 py-2"><input type="number" step="0.1" className="w-full bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
-                          value={+(p.prtCR*100).toFixed(2)}
-                          onChange={(e)=>updatePeriod(idx,{prtCR:(parseFloat(e.target.value||'0')||0)/100},setState)}/></td>
+
+                      {/* 전환율 입력 + % (명) 표시 */}
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-2 justify-end">
+                          <input type="number" step="0.1" className="w-24 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
+                            value={+(p.subCR*100).toFixed(2)}
+                            onChange={(e)=>updatePeriod(idx,{subCR:(parseFloat(e.target.value||'0')||0)/100},setState)}/>
+                          <span className="text-xs text-slate-500 whitespace-nowrap">{`${KRW.pctFmt(p.subCR)} (${Math.round(p.mau*p.subCR).toLocaleString()}명)`}</span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-2 justify-end">
+                          <input type="number" step="0.1" className="w-24 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
+                            value={+(p.prtCR*100).toFixed(2)}
+                            onChange={(e)=>updatePeriod(idx,{prtCR:(parseFloat(e.target.value||'0')||0)/100},setState)}/>
+                          <span className="text-xs text-slate-500 whitespace-nowrap">{`${KRW.pctFmt(p.prtCR)} (${Math.round(p.mau*p.prtCR).toLocaleString()}명)`}</span>
+                        </div>
+                      </td>
+
                       <td className="px-3 py-2"><input type="number" className="w-full bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
                           value={p.server}
                           onChange={(e)=>updatePeriod(idx,{server:parseInt(e.target.value||'0')||0},setState)}/></td>
@@ -435,10 +454,24 @@ export default function FinancialCalculatorApp(){
                           value={p.heads}
                           onChange={(e)=>updatePeriod(idx,{heads:parseInt(e.target.value||'0')||0},setState)}/></td>
                       <td className="px-3 py-2"><Switch checked={p.hasOffice} onCheckedChange={(v)=>updatePeriod(idx,{hasOffice:v},setState)} aria-label="사무실 포함"/></td>
-                      <td className="px-3 py-2"><Switch checked={p.hasLease} onCheckedChange={(v)=>updatePeriod(idx,{hasLease:v},setState)} aria-label="리스"/></td>
-                      <td className="px-3 py-2"><input type="number" className="w-full bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
-                          value={p.leaseCnt}
-                          onChange={(e)=>updatePeriod(idx,{leaseCnt:parseInt(e.target.value||'0')||0},setState)}/></td>
+                      <td className="px-3 py-2"><Switch checked={p.hasLease} onCheckedChange={(v)=>updatePeriod(idx,{hasLease:v},setState)} aria-label="리스"/></td>                      
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-2 justify-end">
+                          <input
+                            type="number"
+                            className="w-24 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
+                            value={p.leaseCnt}
+                            onChange={(e)=>updatePeriod(idx,{leaseCnt:parseInt(e.target.value||'0')||0},setState)}
+                          />
+                          {(() => {
+                            const hoursPerMonth = 22*8;
+                            const denom = Math.max(1, p.leaseCnt);
+                            const perHourPerMachine = (p.mau * p.prtCR) / hoursPerMonth / denom;
+                            const text = isFinite(perHourPerMachine) ? perHourPerMachine.toFixed(1) + '명/시간·대' : '-';
+                            return <span className="text-xs text-slate-500 whitespace-nowrap">{text}</span>;
+                          })()}
+                        </div>
+                      </td>
                       <td className="px-3 py-2">
                         <Button size="icon" variant="destructive" onClick={()=>setState(s=>({...s,periods:s.periods.filter(x=>x.id!==p.id)}))} aria-label="행 삭제">
                           <Trash2 className="w-4 h-4"/>
@@ -454,7 +487,6 @@ export default function FinancialCalculatorApp(){
             <Button className="gap-2" onClick={runSimulation}><Rocket className="w-4 h-4"/> 시뮬레이션하기</Button>
           </CardFooter>
         </Card>
-
 
         {/* 결과 상단 탭 옆에 시나리오 선택 */}
         <div className="flex items-center gap-2">
@@ -579,37 +611,37 @@ export default function FinancialCalculatorApp(){
           </div>
         )}
 
-      {/* 표 보기 */}
-      {tab==="table" && (
-        <div className="pt-6 space-y-4">
-          <Collapse title="구간별 월 발생비용" defaultOpen={false}>
-            <CostByPeriodTable state={state}/>
-            <p className="text-xs text-slate-500 mt-2">요약: 각 구간 월 고정비 합계를 표시합니다.</p>
-          </Collapse>
-          <Collapse title="1~3년차 비용 비율 (변동비/고정비)" defaultOpen={false}>
-            <YearlyCostRatioTable months={months}/>
-            <p className="text-xs text-slate-500 mt-2">Y1~Y3 각 연도의 총 매출 대비 변동비, 고정비, 순이익 비율입니다.</p>
-          </Collapse>
-          <Collapse title="누적손익 (월별)" defaultOpen={false}>
-            <MonthlyTable months={months}/>
-          </Collapse>
-          <Collapse title="1~3년차 시나리오별 매출/이익" defaultOpen={false}>
-            <YearlyTable state={state}/>
-          </Collapse>
-          <Collapse title="투자금 재무 운용 (최대 적자 시점까지)" defaultOpen={false}>
-            <FundingTable state={state} months={months} minCumMonth={minCumMonth}/>
-          </Collapse>
-          <Collapse title="MAU별 BEP (200명 단위)" defaultOpen={false}>
-            {(() => {
-              const beta = state.sensitivity?.beta ?? 0.6;
-              const gamma = state.sensitivity?.gamma ?? 0.4;
-              const adjState = adjustStateForScenario(state, scenarioMult, beta, gamma);
-              return <BEPTable state={adjState}/>;
-            })()}
-            <p className="text-xs text-slate-500 mt-2">요약: 공헌이익 ≥ 고정비 지점이 BEP 입니다.</p>
-          </Collapse>
-        </div>
-      )}
+        {/* 표 보기 */}
+        {tab==="table" && (
+          <div className="pt-6 space-y-4">
+            <Collapse title="구간별 월 발생비용" defaultOpen={false}>
+              <CostByPeriodTable state={state}/>
+              <p className="text-xs text-slate-500 mt-2">토글로 원화/비율 전환 가능. 각 구간 월 고정비 합계 대비 항목 비율을 표시합니다.</p>
+            </Collapse>
+            <Collapse title="1~3년차 비용 비율 (항목별/누적비용 기준)" defaultOpen={false}>
+              <YearlyCostRatioTable months={months} state={adjState}/>
+              <p className="text-xs text-slate-500 mt-2">Y1~Y3 각 연도의 누적 비용(변동+고정) 대비 항목별 비율입니다.</p>
+            </Collapse>
+            <Collapse title="누적손익 (월별)" defaultOpen={false}>
+              <MonthlyTable months={months} monthlyFirstProfitMonth={monthlyFirstProfitMonth} cumBreakEvenMonth={bepMonth}/>
+            </Collapse>
+            <Collapse title="1~3년차 시나리오별 매출/이익" defaultOpen={false}>
+              <YearlyTable state={state}/>
+            </Collapse>
+            <Collapse title="투자금 재무 운용 (최대 적자 시점까지)" defaultOpen={false}>
+              <FundingTable state={state} months={months} minCumMonth={minCumMonth}/>
+            </Collapse>
+            <Collapse title="MAU별 BEP (200명 단위)" defaultOpen={false}>
+              {(() => {
+                const beta = state.sensitivity?.beta ?? 0.6;
+                const gamma = state.sensitivity?.gamma ?? 0.4;
+                const adjState2 = adjustStateForScenario(state, scenarioMult, beta, gamma);
+                return <BEPTable state={adjState2}/>;
+              })()}
+              <p className="text-xs text-slate-500 mt-2">요약: 공헌이익 ≥ 고정비 지점이 BEP 입니다.</p>
+            </Collapse>
+          </div>
+        )}
       </main>
 
       <footer className="py-8 text-center text-xs text-slate-500">
@@ -728,7 +760,6 @@ function Collapse({
   );
 }
 
-
 function MoneyInput({label,value,onChange}:{label:string,value:number,onChange:(v:number)=>void}){
   const [raw,setRaw] = useState(String(value));
   useEffect(()=>{ setRaw(String(value)); },[value]);
@@ -786,19 +817,33 @@ function PillBtn({active, children, onClick}:{active?:boolean; children:React.Re
   );
 }
 
-
 /*************************
  * 표들
  *************************/
 function CostByPeriodTable({state}:{state:any}){
   const outsCost = state.print.outsUnit * state.print.outsRate;
   const leaseCost = state.print.leaseUnit * state.print.leaseRate;
+  const [asPct, setAsPct] = React.useState(false);
+  const fmt = (val:number, total:number)=> asPct ? (total? ((val/total)*100).toFixed(1)+'%':'-') : KRW.fmt(val);
+
   return (
     <div className="overflow-auto">
+      <div className="flex items-center justify-end gap-2 mb-2">
+        <Label className="text-xs text-slate-500">비율 보기</Label>
+        <Switch checked={asPct} onCheckedChange={setAsPct} aria-label="비율 보기 토글"/>
+      </div>
       <table className="w-full text-sm">
         <thead className="bg-slate-100">
           <tr className="[&>th]:px-3 [&>th]:py-2 border-b border-slate-200">
-            <th>기간</th><th className="text-right">서버</th><th className="text-right">사무실</th><th className="text-right">인건비</th><th className="text-right">리스(고정)</th><th className="text-right">마케팅</th><th className="text-right">법률/회계</th><th className="text-right">변동(인쇄/건)</th><th className="text-right">월 합계(고정)</th>
+            <th>기간</th>
+            <th className="text-right">서버</th>
+            <th className="text-right">사무실</th>
+            <th className="text-right">인건비</th>
+            <th className="text-right">리스(고정)</th>
+            <th className="text-right">마케팅</th>
+            <th className="text-right">법률/회계</th>
+            <th className="text-right">총 변동비(월)</th>
+            <th className="text-right">월 합계(고정)</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
@@ -807,17 +852,19 @@ function CostByPeriodTable({state}:{state:any}){
             const office = p.hasOffice ? state.fixed.office : 0;
             const leaseFix = p.hasLease ? state.fixed.leaseMonthly*p.leaseCnt : 0;
             const fixed = p.server + wage + office + state.fixed.mkt + state.fixed.legal + leaseFix;
+            const unitVar = p.hasLease ? leaseCost : outsCost;
+            const varMonthly = Math.round(p.mau * p.prtCR * unitVar);
             return (
               <tr key={p.id} className="[&>td]:px-3 [&>td]:py-2">
                 <td>{p.start}~{p.end}</td>
-                <td className="text-right">{KRW.fmt(p.server)}</td>
-                <td className="text-right">{KRW.fmt(office)}</td>
-                <td className="text-right">{KRW.fmt(wage)}</td>
-                <td className="text-right">{KRW.fmt(leaseFix)}</td>
-                <td className="text-right">{KRW.fmt(state.fixed.mkt)}</td>
-                <td className="text-right">{KRW.fmt(state.fixed.legal)}</td>
-                <td className="text-right">{KRW.fmt(outsCost)} / {KRW.fmt(leaseCost)}</td>
-                <td className="text-right">{KRW.fmt(fixed)}</td>
+                <td className="text-right">{fmt(p.server, fixed)}</td>
+                <td className="text-right">{fmt(office, fixed)}</td>
+                <td className="text-right">{fmt(wage, fixed)}</td>
+                <td className="text-right">{fmt(leaseFix, fixed)}</td>
+                <td className="text-right">{fmt(state.fixed.mkt, fixed)}</td>
+                <td className="text-right">{fmt(state.fixed.legal, fixed)}</td>
+                <td className="text-right">{KRW.fmt(varMonthly)}</td>
+                <td className="text-right">{asPct ? '100%' : KRW.fmt(fixed)}</td>
               </tr>
             )
           })}
@@ -826,6 +873,7 @@ function CostByPeriodTable({state}:{state:any}){
     </div>
   )
 }
+
 
 function BEPTable({state}:{state:any}){
   const std = state.pricing.standard;
@@ -881,7 +929,7 @@ function BEPTable({state}:{state:any}){
   );
 }
 
-function MonthlyTable({months}:{months:any[]}){
+function MonthlyTable({months, monthlyFirstProfitMonth, cumBreakEvenMonth}:{months:any[], monthlyFirstProfitMonth?:number, cumBreakEvenMonth?:number}){
   return (
     <div className="overflow-auto">
       <table className="w-full text-sm">
@@ -891,19 +939,24 @@ function MonthlyTable({months}:{months:any[]}){
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {months.map(r=> (
-            <tr key={r.month} className="[&>td]:px-3 [&>td]:py-2">
-              <td>{r.month}</td>
-              <td className="text-right">{r.mau.toLocaleString()}</td>
-              <td className="text-right">{KRW.fmt(r.subRev)}</td>
-              <td className="text-right">{KRW.fmt(r.prtRev)}</td>
-              <td className="text-right">{KRW.fmt(r.rev)}</td>
-              <td className="text-right">{KRW.fmt(r.varCost)}</td>
-              <td className="text-right">{KRW.fmt(r.fixed)}</td>
-              <td className="text-right">{KRW.fmt(r.net)}</td>
-              <td className="text-right">{KRW.fmt(r.cum)}</td>
-            </tr>
-          ))}
+          {months.map(r=> {
+            const isMonthlyTurn = monthlyFirstProfitMonth && r.month===monthlyFirstProfitMonth;
+            const isCumTurn = cumBreakEvenMonth && r.month===cumBreakEvenMonth;
+            const rowClass = isMonthlyTurn ? 'font-bold text-emerald-600' : isCumTurn ? 'font-bold text-rose-600' : '';
+            return (
+              <tr key={r.month} className={`[&>td]:px-3 [&>td]:py-2 ${rowClass}`}>
+                <td>{r.month}</td>
+                <td className="text-right">{r.mau.toLocaleString()}</td>
+                <td className="text-right">{KRW.fmt(r.subRev)}</td>
+                <td className="text-right">{KRW.fmt(r.prtRev)}</td>
+                <td className="text-right">{KRW.fmt(r.rev)}</td>
+                <td className="text-right">{KRW.fmt(r.varCost)}</td>
+                <td className="text-right">{KRW.fmt(r.fixed)}</td>
+                <td className="text-right">{KRW.fmt(r.net)}</td>
+                <td className="text-right">{KRW.fmt(r.cum)}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -947,19 +1000,51 @@ function YearlyTable({state}:{state:any}){
   );
 }
 
-/** 연도별 비용 비율 테이블 */
-function YearlyCostRatioTable({months}:{months:any[]}){
-  const sumYear = (year:number)=>{
-    const start=(year-1)*12, end=year*12;
-    const m=months.filter(r=>r.month>start && r.month<=end);
+/** 연도별 비용 비율 테이블 — 항목별, 누적비용 기준 */
+function YearlyCostRatioTable({months, state}:{months:any[], state:any}){
+  const getPeriod = (m:number)=> state.periods.find((p:any)=>m>=p.start && m<=p.end);
+
+  const calcYear = (y:number)=>{
+    const mStart=(y-1)*12+1, mEnd=y*12;
+    const ms = months.filter((r:any)=>r.month>=mStart && r.month<=mEnd);
+
+    // 변동비는 months에서 합산 (MAU/전환율 반영)
+    const varCost = ms.reduce((a:any,b:any)=>a+b.varCost,0);
+
+    // 고정비 항목은 기간 정의로부터 월별 합산
+    let server=0, office=0, wage=0, leaseFix=0, mkt=0, legal=0;
+    for(let m=mStart; m<=mEnd; m++){
+      const p = getPeriod(m);
+      if(!p) continue;
+      server += p.server;
+      office += p.hasOffice ? state.fixed.office : 0;
+      wage   += p.hasWage ? (p.avgWage * p.heads) : 0;
+      leaseFix += p.hasLease ? (state.fixed.leaseMonthly * p.leaseCnt) : 0;
+      mkt += state.fixed.mkt;
+      legal += state.fixed.legal;
+    }
+
+    const total = varCost + server + office + wage + leaseFix + mkt + legal;
+    const pct = (x:number)=> total? ((x/total)*100).toFixed(1)+'%' : '-';
+
     return {
-      rev:      m.reduce((a,b)=>a+b.rev,0),
-      varCost:  m.reduce((a,b)=>a+b.varCost,0),
-      fixed:    m.reduce((a,b)=>a+b.fixed,0),
-      net:      m.reduce((a,b)=>a+b.net,0),
+      year: y,
+      total,
+      rows: {
+        '변동비': pct(varCost),
+        '서버': pct(server),
+        '사무실': pct(office),
+        '인건비': pct(wage),
+        '리스(고정)': pct(leaseFix),
+        '마케팅': pct(mkt),
+        '법률/회계': pct(legal),
+        '합계': '100%'
+      }
     };
   };
-  const data = [1,2,3].map(y=>({year:y, ...sumYear(y)}));
+
+  const data = [1,2,3].map(calcYear);
+  const rowLabels = ['변동비','서버','사무실','인건비','리스(고정)','마케팅','법률/회계','합계'];
 
   return (
     <div className="overflow-auto">
@@ -967,38 +1052,21 @@ function YearlyCostRatioTable({months}:{months:any[]}){
         <thead className="bg-slate-100">
           <tr className="[&>th]:px-3 [&>th]:py-2 border-b border-slate-200">
             <th>구분</th>
-            {data.map(d=><th key={d.year} className="text-right">Y{d.year}</th>)}
+            {data.map(d=> <th key={d.year} className="text-right">Y{d.year}</th>)}
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          <tr>
-            <td className="px-3 py-2">매출</td>
-            {data.map((d,i)=><td key={i} className="text-right">{KRW.fmt(d.rev)}</td>)}
-          </tr>
-          <tr>
-            <td className="px-3 py-2">변동비 비율</td>
-            {data.map((d,i)=><td key={i} className="text-right">
-              {d.rev? ((d.varCost/d.rev)*100).toFixed(1)+'%' : '-'}
-            </td>)}
-          </tr>
-          <tr>
-            <td className="px-3 py-2">고정비 비율</td>
-            {data.map((d,i)=><td key={i} className="text-right">
-              {d.rev? ((d.fixed/d.rev)*100).toFixed(1)+'%' : '-'}
-            </td>)}
-          </tr>
-          <tr>
-            <td className="px-3 py-2">순이익 비율</td>
-            {data.map((d,i)=><td key={i} className="text-right">
-              {d.rev? ((d.net/d.rev)*100).toFixed(1)+'%' : '-'}
-            </td>)}
-          </tr>
+          {rowLabels.map((label)=> (
+            <tr key={label} className="[&>td]:px-3 [&>td]:py-2">
+              <td>{label}</td>
+              {data.map(d=> <td key={d.year} className="text-right">{d.rows[label as keyof typeof d.rows]}</td>)}
+            </tr>
+          ))}
         </tbody>
       </table>
     </div>
   );
 }
-
 
 function FundingTable({state, months, minCumMonth}:{state:any, months:any[], minCumMonth:number}){
   const until = months.filter(m=>m.month<=minCumMonth);
@@ -1041,105 +1109,86 @@ function mergeRanges(ranges:number[][]){
 }
 
 function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:number=0.4){
-// 1) 가중치 적용된 기간 목록
-const basePeriods = [...state.periods].sort((a,b)=>a.start-b.start);
-const periods = basePeriods.map(p=>adjustPeriodByWeight(p, mult, beta, gamma));
+  // 1) 가중치 적용된 기간 목록
+  const basePeriods = [...state.periods].sort((a,b)=>a.start-b.start);
+  const periods = basePeriods.map(p=>adjustPeriodByWeight(p, mult, beta, gamma));
 
+  const maxEnd = periods.reduce((m:number,p:any)=>Math.max(m,p.end),0);
+  const months:any[] = [];
 
-const maxEnd = periods.reduce((m:number,p:any)=>Math.max(m,p.end),0);
-const months:any[] = [];
+  const stdPrice = state.pricing.standard;
+  const printPrice = state.print.price;
+  const outsCost = state.print.outsUnit * state.print.outsRate;
+  const leaseCost = state.print.leaseUnit * state.print.leaseRate;
 
+  let lastMAU = 0; // 직전 월 MAU
 
-const stdPrice = state.pricing.standard;
-const printPrice = state.print.price;
-const outsCost = state.print.outsUnit * state.print.outsRate;
-const leaseCost = state.print.leaseUnit * state.print.leaseRate;
+  for(let m=1; m<=maxEnd; m++){
+    const pIdx = periods.findIndex((pp:any)=>m>=pp.start && m<=pp.end);
+    if(pIdx<0){
+      months.push({month:m, rev:0, subRev:0, prtRev:0, varCost:0, fixed:0, net:0, mau:0, cum:0, ratios:{sub:0,prt:0}});
+      continue;
+    }
+    const p = periods[pIdx];
 
+    // 선형 증가: 이전 구간(가중치 적용 후) 목표 → 현재 목표까지 선형
+    const prevTarget = (pIdx>0)? periods[pIdx-1].mau : p.mau; // 첫 구간은 자기 목표
+    const periodLen = (p.end - p.start + 1);
+    const step = (p.mau - prevTarget) / periodLen;
 
-let lastMAU = 0; // 직전 월 MAU
+    const mau = (pIdx===0)? p.mau : Math.max(0, Math.round(lastMAU + step));
+    lastMAU = mau;
 
+    const subUsers = mau * p.subCR;
+    const prtOrders = mau * p.prtCR; // 1인 1주문 가정
+    const subRev = subUsers * stdPrice;
+    const prtRev = prtOrders * printPrice;
 
-for(let m=1; m<=maxEnd; m++){
-const pIdx = periods.findIndex((pp:any)=>m>=pp.start && m<=pp.end);
-if(pIdx<0){
-months.push({month:m, rev:0, subRev:0, prtRev:0, varCost:0, fixed:0, net:0, mau:0, cum:0, ratios:{sub:0,prt:0}});
-continue;
-}
-const p = periods[pIdx];
+    const varCost = prtOrders * (p.hasLease? leaseCost : outsCost);
 
+    // 고정비: 서버(가중치 반영됨) + 나머지 고정비
+    const wage = p.hasWage ? (p.avgWage * p.heads) : 0;
+    const office = p.hasOffice ? state.fixed.office : 0;
+    const leaseFix = p.hasLease ? state.fixed.leaseMonthly * p.leaseCnt : 0;
+    const fixed = p.server + wage + office + state.fixed.mkt + state.fixed.legal + leaseFix;
 
-// 선형 증가: 이전 구간(가중치 적용 후) 목표 → 현재 목표까지 선형
-const prevTarget = (pIdx>0)? periods[pIdx-1].mau : p.mau; // 첫 구간은 자기 목표
-const periodLen = (p.end - p.start + 1);
-const step = (p.mau - prevTarget) / periodLen;
+    const net = (subRev + prtRev - varCost) - fixed;
 
+    months.push({month:m, mau, subRev, prtRev, rev:subRev+prtRev, varCost, fixed, net, ratios:{sub:p.subCR, prt:p.prtCR}});
+  }
 
-const mau = (pIdx===0)? p.mau : Math.max(0, Math.round(lastMAU + step));
-lastMAU = mau;
+  // 누적/최저/흑자전환
+  let cum=0, minCum=0, minCumMonth=0, bepMonth:number|undefined=undefined;
+  months.forEach(r=>{ cum+=r.net; r.cum=cum; if(cum<minCum){ minCum=cum; minCumMonth=r.month; } if(bepMonth===undefined && r.cum>=0) bepMonth=r.month; });
 
-
-const subUsers = mau * p.subCR;
-const prtOrders = mau * p.prtCR; // 1인 1주문 가정
-const subRev = subUsers * stdPrice;
-const prtRev = prtOrders * printPrice;
-
-
-const varCost = prtOrders * (p.hasLease? leaseCost : outsCost);
-
-
-// 고정비: 서버(가중치 반영됨) + 나머지 고정비
-const wage = p.hasWage ? (p.avgWage * p.heads) : 0;
-const office = p.hasOffice ? state.fixed.office : 0;
-const leaseFix = p.hasLease ? state.fixed.leaseMonthly * p.leaseCnt : 0;
-const fixed = p.server + wage + office + state.fixed.mkt + state.fixed.legal + leaseFix;
-
-
-const net = (subRev + prtRev - varCost) - fixed;
-
-
-months.push({month:m, mau, subRev, prtRev, rev:subRev+prtRev, varCost, fixed, net, ratios:{sub:p.subCR, prt:p.prtCR}});
-}
-
-
-// 누적/최저/흑자전환
-let cum=0, minCum=0, minCumMonth=0, bepMonth:number|undefined=undefined;
-months.forEach(r=>{ cum+=r.net; r.cum=cum; if(cum<minCum){ minCum=cum; minCumMonth=r.month; } if(bepMonth===undefined && r.cum>=0) bepMonth=r.month; });
-
-
-return {months, minCum, minCumMonth, bepMonth};
+  return {months, minCum, minCumMonth, bepMonth};
 }
 
 function calcScenarioYears(state:any){
-// 중립(원본) 월 시뮬
-const beta = state.sensitivity?.beta ?? 0.6;
-const gamma = state.sensitivity?.gamma ?? 0.4;
-const neuMonths = calcMonthlySeries(state, 1.0, beta, gamma).months;
+  // 중립(원본) 월 시뮬
+  const beta = state.sensitivity?.beta ?? 0.6;
+  const gamma = state.sensitivity?.gamma ?? 0.4;
+  const neuMonths = calcMonthlySeries(state, 1.0, beta, gamma).months;
 
+  const sumYear = (months:any[], y:number)=>{
+    const start = (y-1)*12, end = y*12;
+    return months
+      .filter(m => m.month > start && m.month <= end)
+      .reduce((acc, r)=> acc + r.net, 0);
+  };
 
-const sumYear = (months:any[], y:number)=>{
-const start = (y-1)*12, end = y*12;
-return months
-.filter(m => m.month > start && m.month <= end)
-.reduce((acc, r)=> acc + r.net, 0);
-};
+  const neu = [1,2,3].map(y=>({ year:y, net: sumYear(neuMonths, y) }));
 
+  // 가정치를 스케일링한 상태로 다시 월 시뮬
+  const w = state.weights;
+  const conMonths = calcMonthlySeries(adjustStateForScenario(state, w.con, beta, gamma), 1.0, beta, gamma).months;
+  const conservative = [1,2,3].map(y=>({ year:y, net: sumYear(conMonths, y) }));
 
-const neu = [1,2,3].map(y=>({ year:y, net: sumYear(neuMonths, y) }));
+  const aggMonths = calcMonthlySeries(adjustStateForScenario(state, w.agg, beta, gamma), 1.0, beta, gamma).months;
+  const aggressive = [1,2,3].map(y=>({ year:y, net: sumYear(aggMonths, y) }));
 
-
-// 가정치를 스케일링한 상태로 다시 월 시뮬
-const w = state.weights;
-const conMonths = calcMonthlySeries(adjustStateForScenario(state, w.con, beta, gamma), 1.0, beta, gamma).months;
-const conservative = [1,2,3].map(y=>({ year:y, net: sumYear(conMonths, y) }));
-
-
-const aggMonths = calcMonthlySeries(adjustStateForScenario(state, w.agg, beta, gamma), 1.0, beta, gamma).months;
-const aggressive = [1,2,3].map(y=>({ year:y, net: sumYear(aggMonths, y) }));
-
-
-return { neutral: neu, conservative, aggressive };
+  return { neutral: neu, conservative, aggressive };
 }
-
 
 function calcNeededFund(months:any[]){
   let minCum = 0; let minAt = 0; let cum=0;
@@ -1155,7 +1204,7 @@ function calcNeededFund(months:any[]){
 function exportCSV(months:any[]){
   const headers = ['month','mau','subRev','prtRev','rev','varCost','fixed','net','cum'];
   const rows = months.map(r=>[r.month,r.mau,r.subRev,r.prtRev,r.rev,r.varCost,r.fixed,r.net,r.cum]);
-  const csv = [headers.join(','), ...rows.map(r=>r.join(','))].join('\n');
+  const csv = [headers.join(', '), ...rows.map(r=>r.join(','))].join('\n');
   const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href=url; a.download='months.csv'; a.click(); URL.revokeObjectURL(url);
