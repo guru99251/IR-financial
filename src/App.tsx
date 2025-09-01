@@ -821,59 +821,60 @@ function PillBtn({active, children, onClick}:{active?:boolean; children:React.Re
  * 표들
  *************************/
 function CostByPeriodTable({state}:{state:any}){
-  const outsCost = state.print.outsUnit * state.print.outsRate;
-  const leaseCost = state.print.leaseUnit * state.print.leaseRate;
-  const [asPct, setAsPct] = React.useState(false);
-  const fmt = (val:number, total:number)=> asPct ? (total? ((val/total)*100).toFixed(1)+'%':'-') : KRW.fmt(val);
+const outsCost = state.print.outsUnit * state.print.outsRate;
+const leaseCost = state.print.leaseUnit * state.print.leaseRate;
+const [asPct, setAsPct] = React.useState(false);
+const fmt = (val:number, total:number)=> asPct ? (total? ((val/total)*100).toFixed(1)+'%':'-') : KRW.fmt(val);
 
-  return (
-    <div className="overflow-auto">
-      <div className="flex items-center justify-end gap-2 mb-2">
-        <Label className="text-xs text-slate-500">비율 보기</Label>
-        <Switch checked={asPct} onCheckedChange={setAsPct} aria-label="비율 보기 토글"/>
-      </div>
-      <table className="w-full text-sm">
-        <thead className="bg-slate-100">
-          <tr className="[&>th]:px-3 [&>th]:py-2 border-b border-slate-200">
-            <th>기간</th>
-            <th className="text-right">서버</th>
-            <th className="text-right">사무실</th>
-            <th className="text-right">인건비</th>
-            <th className="text-right">리스(고정)</th>
-            <th className="text-right">마케팅</th>
-            <th className="text-right">법률/회계</th>
-            <th className="text-right">총 변동비(월)</th>
-            <th className="text-right">월 합계(고정)</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {state.periods.sort((a:any,b:any)=>a.start-b.start).map((p:any)=>{
-            const wage = p.hasWage ? (p.avgWage*p.heads):0;
-            const office = p.hasOffice ? state.fixed.office : 0;
-            const leaseFix = p.hasLease ? state.fixed.leaseMonthly*p.leaseCnt : 0;
-            const fixed = p.server + wage + office + state.fixed.mkt + state.fixed.legal + leaseFix;
-            const unitVar = p.hasLease ? leaseCost : outsCost;
-            const varMonthly = Math.round(p.mau * p.prtCR * unitVar);
-            return (
-              <tr key={p.id} className="[&>td]:px-3 [&>td]:py-2">
-                <td>{p.start}~{p.end}</td>
-                <td className="text-right">{fmt(p.server, fixed)}</td>
-                <td className="text-right">{fmt(office, fixed)}</td>
-                <td className="text-right">{fmt(wage, fixed)}</td>
-                <td className="text-right">{fmt(leaseFix, fixed)}</td>
-                <td className="text-right">{fmt(state.fixed.mkt, fixed)}</td>
-                <td className="text-right">{fmt(state.fixed.legal, fixed)}</td>
-                <td className="text-right">{KRW.fmt(varMonthly)}</td>
-                <td className="text-right">{asPct ? '100%' : KRW.fmt(fixed)}</td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-    </div>
-  )
+
+return (
+<div className="overflow-auto">
+<div className="flex items-center justify-end gap-2 mb-2">
+<Label className="text-xs text-slate-500">비율 보기</Label>
+<Switch checked={asPct} onCheckedChange={setAsPct} aria-label="비율 보기 토글"/>
+</div>
+<table className="w-full text-sm">
+<thead className="bg-slate-100">
+<tr className="[&>th]:px-3 [&>th]:py-2 border-b border-slate-200">
+<th>기간</th>
+<th className="text-right">서버</th>
+<th className="text-right">사무실</th>
+<th className="text-right">인건비</th>
+<th className="text-right">리스(고정)</th>
+<th className="text-right">마케팅</th>
+<th className="text-right">법률/회계</th>
+<th className="text-right">총 변동비(월)</th>
+<th className="text-right">월 합계(고정+변동)</th>
+</tr>
+</thead>
+<tbody className="divide-y divide-slate-100">
+{state.periods.sort((a:any,b:any)=>a.start-b.start).map((p:any)=>{
+const wage = p.hasWage ? (p.avgWage*p.heads):0;
+const office = p.hasOffice ? state.fixed.office : 0;
+const leaseFix = p.hasLease ? state.fixed.leaseMonthly*p.leaseCnt : 0;
+const fixed = p.server + wage + office + state.fixed.mkt + state.fixed.legal + leaseFix;
+const unitVar = p.hasLease ? leaseCost : outsCost;
+const varMonthly = Math.round(p.mau * p.prtCR * unitVar);
+const totalBase = fixed + varMonthly;
+return (
+<tr key={p.id} className="[&>td]:px-3 [&>td]:py-2">
+<td>{p.start}~{p.end}</td>
+<td className="text-right">{fmt(p.server, totalBase)}</td>
+<td className="text-right">{fmt(office, totalBase)}</td>
+<td className="text-right">{fmt(wage, totalBase)}</td>
+<td className="text-right">{fmt(leaseFix, totalBase)}</td>
+<td className="text-right">{fmt(state.fixed.mkt, totalBase)}</td>
+<td className="text-right">{fmt(state.fixed.legal, totalBase)}</td>
+<td className="text-right">{fmt(varMonthly, totalBase)}</td>
+<td className="text-right">{asPct ? '100%' : KRW.fmt(totalBase)}</td>
+</tr>
+)
+})}
+</tbody>
+</table>
+</div>
+)
 }
-
 
 function BEPTable({state}:{state:any}){
   const std = state.pricing.standard;
