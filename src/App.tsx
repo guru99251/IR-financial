@@ -87,7 +87,6 @@ function adjustStateForScenario(base:any, mult:number, beta:number, gamma:number
  * 초기 상태
  *************************/
 function uid(){ return Math.random().toString(36).slice(2,9); }
-const STORE_KEY = 'lm_fin_cases_v7';
 
 const defaultState = {
   name: "Case A (default)",
@@ -328,7 +327,7 @@ const deleteCase = async () => {
   const officeOffRanges = mergeRanges(state.periods.filter(p=>!p.hasOffice).map(p=>[p.start,p.end]));
 
   // 시나리오 반영 상태 (표 일부에서 사용)
-  const beta = state.sensitivdity?.beta ?? 0.6;
+  const beta = state.sensitivity?.beta ?? 0.6;
   const gamma = state.sensitivity?.gamma ?? 0.4;
   const adjState = adjustStateForScenario(state, scenarioMult, beta, gamma);
 
