@@ -214,8 +214,7 @@ export default function FinancialCalculatorApp(){
   // 차트 렌더
   useEffect(()=>{
     const labels = months.map(r=>`${r.month}M`);
-    const yFmt = (v:number)=>KRW.fmt(v);
-
+    const yFmt = (v: string | number) => KRW.fmt(typeof v === "number" ? v : Number(v));
     // 누적 손익
     if (cumChart.current) cumChart.current.destroy();
     if (cumRef.current) {
@@ -329,7 +328,7 @@ const deleteCase = async () => {
   const officeOffRanges = mergeRanges(state.periods.filter(p=>!p.hasOffice).map(p=>[p.start,p.end]));
 
   // 시나리오 반영 상태 (표 일부에서 사용)
-  const beta = state.sensitivity?.beta ?? 0.6;
+  const beta = state.sensitivdity?.beta ?? 0.6;
   const gamma = state.sensitivity?.gamma ?? 0.4;
   const adjState = adjustStateForScenario(state, scenarioMult, beta, gamma);
 
