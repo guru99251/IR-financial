@@ -392,23 +392,22 @@ export default function FinancialCalculatorApp(){
           <CardContent className="p-0">
             <div className="overflow-auto">
               <table className="w-full text-sm">
-                <thead className="bg-slate-100 text-slate-700">
-                  <tr className="[&>th]:px-3 [&>th]:py-2 border-b border-slate-200">
-                    {/* 기간 열 너비 40% 축소 */}
-                    <th className="w-[72px] min-w-[72px]">기간 (개월)</th>
-                    <th className="min-w-[100px]">MAU</th>
-                    <th>구독 전환율</th>
-                    <th>인쇄 전환율</th>
-                    <th>서버 비용(월)</th>
-                    <th>인건비 포함?</th>
-                    <th>평균 인건비</th>
-                    <th>인원수</th>
-                    <th>사무실 포함?</th>
-                    <th>리스?</th>
-                    <th>리스 개수</th>
-                    <th>삭제</th>
-                  </tr>
-                </thead>
+              <thead className="bg-slate-100 text-slate-700">
+                <tr className="[&>th]:px-3 [&>th]:py-2 border-b border-slate-200">
+                  <th className="w-[85px] min-w-[72px]">기간<br></br>(개월)</th>
+                  <th className="min-w-[80px]">MAU</th>
+                  <th className="min-w-[80px]">구독 전환율</th>
+                  <th className="min-w-[80px]">인쇄 전환율</th>
+                  <th className="min-w-[40px]">서버 비용(월)</th>
+                  <th>인건비포함?</th>
+                  <th className="min-w-[40px]">평균 인건비</th>
+                  <th className="min-w-[40px]">인원수</th>
+                  <th>사무실 포함?</th>
+                  <th>리스?</th>
+                  <th className="min-w-[80px]">리스 개수<br></br>(시간·대 당)</th>
+                  <th>삭제</th>
+                </tr>
+              </thead>
                 <tbody className="divide-y divide-slate-100">
                   {state.periods.sort((a,b)=>a.start-b.start).map((p,idx)=> (
                     <tr key={p.id} className="hover:bg-slate-50 transition-colors">
@@ -427,39 +426,50 @@ export default function FinancialCalculatorApp(){
 
                       {/* 전환율 입력 + % (명) 표시 */}
                       <td className="px-3 py-2">
-                        <div className="flex items-center gap-2 justify-end">
-                          <input type="number" step="0.1" className="w-24 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
+                        <div className="flex items-center gap-0 justify-end">
+                          <input type="number" step="0.1" className="w-15 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
                             value={+(p.subCR*100).toFixed(2)}
                             onChange={(e)=>updatePeriod(idx,{subCR:(parseFloat(e.target.value||'0')||0)/100},setState)}/>
                           <span className="text-xs text-slate-500 whitespace-nowrap">{`${KRW.pctFmt(p.subCR)} (${Math.round(p.mau*p.subCR).toLocaleString()}명)`}</span>
                         </div>
                       </td>
                       <td className="px-3 py-2">
-                        <div className="flex items-center gap-2 justify-end">
-                          <input type="number" step="0.1" className="w-24 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
+                        <div className="flex items-center gap-0 justify-end">
+                          <input type="number" step="0.1" className="w-15 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
                             value={+(p.prtCR*100).toFixed(2)}
                             onChange={(e)=>updatePeriod(idx,{prtCR:(parseFloat(e.target.value||'0')||0)/100},setState)}/>
                           <span className="text-xs text-slate-500 whitespace-nowrap">{`${KRW.pctFmt(p.prtCR)} (${Math.round(p.mau*p.prtCR).toLocaleString()}명)`}</span>
                         </div>
                       </td>
 
-                      <td className="px-3 py-2"><input type="number" className="w-full bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
-                          value={p.server}
-                          onChange={(e)=>updatePeriod(idx,{server:parseInt(e.target.value||'0')||0},setState)}/></td>
+                      <td className="px-3 py-2">
+                        <input type="number"
+                        className="w-25 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
+                        value={p.server}
+                        onChange={(e)=>updatePeriod(idx,{server:parseInt(e.target.value||'0')||0},setState)}/>
+                      </td>
+                      
                       <td className="px-3 py-2"><Switch checked={p.hasWage} onCheckedChange={(v)=>updatePeriod(idx,{hasWage:v},setState)} aria-label="인건비 포함"/></td>
-                      <td className="px-3 py-2"><input type="number" className="w-full bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
-                          value={p.avgWage}
-                          onChange={(e)=>updatePeriod(idx,{avgWage:parseInt(e.target.value||'0')||0},setState)}/></td>
-                      <td className="px-3 py-2"><input type="number" className="w-full bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
-                          value={p.heads}
-                          onChange={(e)=>updatePeriod(idx,{heads:parseInt(e.target.value||'0')||0},setState)}/></td>
+                      
+                      <td className="px-3 py-2">
+                        <input type="number"
+                        className="w-25 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
+                        value={p.avgWage}
+                        onChange={(e)=>updatePeriod(idx,{avgWage:parseInt(e.target.value||'0')||0},setState)}/>
+                      </td>
+                      <td className="px-3 py-2">
+                        <input type="number"
+                        className="w-10 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
+                        value={p.heads}
+                        onChange={(e)=>updatePeriod(idx,{heads:parseInt(e.target.value||'0')||0},setState)}/>
+                      </td>
                       <td className="px-3 py-2"><Switch checked={p.hasOffice} onCheckedChange={(v)=>updatePeriod(idx,{hasOffice:v},setState)} aria-label="사무실 포함"/></td>
                       <td className="px-3 py-2"><Switch checked={p.hasLease} onCheckedChange={(v)=>updatePeriod(idx,{hasLease:v},setState)} aria-label="리스"/></td>                      
                       <td className="px-3 py-2">
-                        <div className="flex items-center gap-2 justify-end">
+                        <div className="flex items-center gap-0 justify-end">
                           <input
                             type="number"
-                            className="w-24 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
+                            className="w-15 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
                             value={p.leaseCnt}
                             onChange={(e)=>updatePeriod(idx,{leaseCnt:parseInt(e.target.value||'0')||0},setState)}
                           />
@@ -467,7 +477,7 @@ export default function FinancialCalculatorApp(){
                             const hoursPerMonth = 22*8;
                             const denom = Math.max(1, p.leaseCnt);
                             const perHourPerMachine = (p.mau * p.prtCR) / hoursPerMonth / denom;
-                            const text = isFinite(perHourPerMachine) ? perHourPerMachine.toFixed(1) + '명/시간·대' : '-';
+                            const text = isFinite(perHourPerMachine) ? perHourPerMachine.toFixed(1) + '명/시간' : '-';
                             return <span className="text-xs text-slate-500 whitespace-nowrap">{text}</span>;
                           })()}
                         </div>
