@@ -15,6 +15,18 @@ import { Switch } from "@/components/ui/switch";
 import Chart from "chart.js/auto";
 import type { Chart as ChartType } from "chart.js";
 
+import { supabase } from './lib/supabaseClient';
+
+// 공유 슬러그: ?share=xxx 가 있으면 우선, 없으면 도메인+경로로 생성
+const getShareSlug = () => {
+  const u = new URL(window.location.href);
+  const q = u.searchParams.get('share');
+  if (q && q.trim()) return q.trim();
+  return `${location.hostname}${location.pathname}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+};
+const SHARE_SLUG = getShareSlug();
+
+
 /*************************
  * 통화/퍼센트 유틸
  *************************/
@@ -121,10 +133,55 @@ export default function FinancialCalculatorApp(){
   const [state,setState] = useState(defaultState);
   const [scenario, setScenario] = useState<'con'|'neu'|'agg'>('neu');
   const scenarioMult = state.weights[scenario];
-  const [caseList,setCaseList] = useState<any[]>(()=>JSON.parse(localStorage.getItem(STORE_KEY)||'[]'));
   const [periodDraft,setPeriodDraft] = useState({start:1,end:3,mau:300});
   const [tab,setTab] = useState("sum");
   const [simTick,setSimTick] = useState(0);
+
+  // caselist
+  const [caseList, setCaseList] = useState<any[]>([]);
+  const [saving, setSaving] = useState<'idle'|'saving'|'saved'|'error'>('idle');
+  const versionRef = useRef<number>(0);
+
+  // ① 목록 + (선택) 현재 state 불러오기
+  const fetchCaseList = async () => {
+    const { data, error } = await supabase
+      .from('shared_cases')
+      .select('name, payload, version, updated_at')
+      .eq('slug', SHARE_SLUG)
+      .order('updated_at', { ascending: false });
+
+    if (!error && data) {
+      setCaseList(data.map(r => ({ name: r.name, ...r.payload })));
+      // 현재 state.name 과 동일한 케이스가 있으면 그 payload로 동기화
+      const cur = data.find(d => d.name === state.name);
+      if (cur?.payload) {
+        setState(cur.payload);
+        versionRef.current = cur.version ?? 0;
+      }
+    }
+  };
+
+  useEffect(() => {
+    fetchCaseList();
+  }, []);
+
+  // ② 실시간 반영
+  useEffect(() => {
+    const ch = supabase
+      .channel('shared-cases')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'shared_cases',
+        filter: `slug=eq.${SHARE_SLUG}`,
+      }, () => {
+        // 목록 및 현재 케이스 재조회
+        fetchCaseList();
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(ch); };
+  }, []);
 
   // 계산 결과
   const { months, minCum, minCumMonth, bepMonth } = useMemo(
@@ -210,23 +267,71 @@ export default function FinancialCalculatorApp(){
   }, [months, state, simTick]);
 
   // 저장/불러오기
-  const saveCase = ()=>{
-    let next = [...caseList];
-    const idx = next.findIndex((c:any)=>c.name===state.name);
+const saveCase = async () => {
+  try {
+    setSaving('saving');
     const payload = JSON.parse(JSON.stringify(state));
-    if(idx>=0) next[idx]=payload; else next.push(payload);
-    setCaseList(next);
-    localStorage.setItem(STORE_KEY, JSON.stringify(next));
+    const nextVersion = (versionRef.current ?? 0) + 1;
+    const { error } = await supabase
+      .from('shared_cases')
+      .upsert({
+        slug: SHARE_SLUG,
+        name: state.name,    // 목록에서 고유 식별자
+        payload,
+        version: nextVersion,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'slug,name' }); // 복합 키
+
+    if (error) throw error;
+    versionRef.current = nextVersion;
+    setSaving('saved');
+    setTimeout(()=>setSaving('idle'), 800);
+    fetchCaseList();
+  } catch (e) {
+    console.error(e);
+    setSaving('error');
   }
-  const loadCase = (name:string)=>{
-    const c = caseList.find((x:any)=>x.name===name);
-    if(c) setState(c);
+};
+
+const loadCase = async (name: string) => {
+  const { data, error } = await supabase
+    .from('shared_cases')
+    .select('payload, version')
+    .eq('slug', SHARE_SLUG)
+    .eq('name', name)
+    .single();
+
+  if (error || !data) {
+    alert('해당 Case를 찾을 수 없습니다');
+    return;
   }
-  const deleteCase = ()=>{
-    const next = caseList.filter((c:any)=>c.name!==state.name);
-    setCaseList(next);
-    localStorage.setItem(STORE_KEY, JSON.stringify(next));
+  setState(data.payload);
+  versionRef.current = data.version ?? 0;
+};
+
+const deleteCase = async () => {
+  const { error } = await supabase
+    .from('shared_cases')
+    .delete()
+    .eq('slug', SHARE_SLUG)
+    .eq('name', state.name);
+
+  if (error) {
+    alert('삭제 실패: ' + error.message);
+    return;
   }
+  // 현재 열려 있던 케이스가 삭제되었으니 목록 새로고침 + 기본 상태로
+  await fetchCaseList();
+  setState(defaultState);
+};
+
+useEffect(() => {
+  const t = setTimeout(() => { saveCase(); }, 500);
+  return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [state]);
+
+
 
   // 헬퍼
   const officeOffRanges = mergeRanges(state.periods.filter(p=>!p.hasOffice).map(p=>[p.start,p.end]));
