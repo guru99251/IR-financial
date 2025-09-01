@@ -325,14 +325,6 @@ const deleteCase = async () => {
   setState(defaultState);
 };
 
-useEffect(() => {
-  const t = setTimeout(() => { saveCase(); }, 500);
-  return () => clearTimeout(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [state]);
-
-
-
   // 헬퍼
   const officeOffRanges = mergeRanges(state.periods.filter(p=>!p.hasOffice).map(p=>[p.start,p.end]));
 
