@@ -191,6 +191,7 @@ const defaultBmSimple = {
   affiliate: { aov: 30000, conv: 0.01, takeRate: 0.20, costRate: 0.00 },
   b2b:       { pricePerDeal: 300000, dealsPerQuarter: 2, costRate: 0.30 },
   api:       { callsPerMonth: 5_000_000, pricePerCallUSD: 0.01, fxKRWPerUSD: 1300, costRate: 0.40 },
+  enabled: { auxB2C: true, b2b: true, api: true },
 } as const;
 
 // 2) 인프라(자동 서버/스토리지) 기본값
@@ -234,6 +235,7 @@ function withDefaults<T extends { bmSimple?: any; infra?: any }>(s: T): T {
   const ifr = s?.infra || {};
   return {
     ...s,
+
     bmSimple: {
       ...defaultBmSimple,
       ...bm,
@@ -243,7 +245,10 @@ function withDefaults<T extends { bmSimple?: any; infra?: any }>(s: T): T {
       affiliate:  { ...defaultBmSimple.affiliate,  ...(bm.affiliate||{}) },
       b2b:        { ...defaultBmSimple.b2b,        ...(bm.b2b||{}) },
       api:        { ...defaultBmSimple.api,        ...(bm.api||{}) },
+      // ✅ 추가
+      enabled:    { ...defaultBmSimple.enabled,    ...(bm.enabled||{}) },
     },
+
     infra: {
       ...defaultInfra,
       ...ifr,
@@ -361,15 +366,30 @@ const fetchCaseList = async () => {
     return () => { supabase.removeChannel(ch); };
   }, []);
 
+  // PATCH-3: 토글에 따라 활성화 월을 무력화(999)하여 BM 비활성처럼 처리
+  const patchedActivation = useMemo(()=>{
+    const en = state.bmSimple?.enabled || { auxB2C:true, b2b:true, api:true };
+    return {
+      auxStartMonth: en.auxB2C ? state.bmSimple.activation.auxStartMonth : 999,
+      b2bStartMonth: en.b2b    ? state.bmSimple.activation.b2bStartMonth : 999,
+      apiStartMonth: en.api    ? state.bmSimple.activation.apiStartMonth : 999,
+    };
+  }, [state.bmSimple.activation, state.bmSimple?.enabled]);
+
+  const calcState = useMemo(()=> ({
+    ...state,
+    bmSimple: { ...state.bmSimple, activation: patchedActivation }
+  }), [state, patchedActivation]);
+
   // 계산 결과
   const { months, minCum, minCumMonth, bepMonth } = useMemo(
     ()=>calcMonthlySeries(
-      state,
+      calcState,
       scenarioMult,
       state.sensitivity?.beta ?? 0.6,
       state.sensitivity?.gamma ?? 0.4
     ),
-    [state, scenarioMult, simTick]
+    [calcState, scenarioMult, simTick]
   );
   const monthlyFirstProfitMonth = useMemo(
     () => months.find(m=>m.net>=0)?.month,
@@ -462,7 +482,7 @@ const fetchCaseList = async () => {
     // 연도별 시나리오 (바)
     if (scChart.current) scChart.current.destroy();
     if (scRef.current) {
-      const sc = calcScenarioYears(state);
+      const sc = calcScenarioYears(calcState);
       const yLabels = sc.neutral.map(r => `Y${r.year}`);
       scChart.current = new Chart(scRef.current, {
         type: "bar",
@@ -596,202 +616,244 @@ const deleteCase = async () => {
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
         {/* (1) 기본설정 */}
         <SectionTitle icon={<Settings className="w-4 h-4"/>} title="① 기본설정" subtitle="케이스 저장 · 불러오기 및 기초 변수"/>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          <HoverCard>
-            <CardHeader>
-              <CardTitle className="text-sm text-slate-600">Case 관리</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Label htmlFor="caseName" className="text-slate-700">Case 이름</Label>
-              <Input id="caseName" value={state.name} onChange={e=>setState(s=>({...s,name:e.target.value}))} placeholder="예: Case A (MVP)"/>
-              <div className="flex flex-wrap gap-2 pt-1">
-                <Button onClick={saveCase} className="gap-2"><Save className="w-4 h-4"/> 저장</Button>
-                <Button variant="secondary" onClick={()=>setState(defaultState)} className="gap-2"><LayoutGrid className="w-4 h-4"/> 예시 불러오기</Button>
-                <Button variant="destructive" onClick={deleteCase} className="gap-2"><Trash2 className="w-4 h-4"/> 삭제</Button>
-              </div>
-              <div>
-                <Label className="text-slate-700">저장된 Case</Label>
-                <div className="mt-2 flex items-center gap-2">
-                  <select className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring focus:ring-indigo-200"
-                          onChange={(e)=>loadCase(e.target.value)}
-                          defaultValue="">
-                    <option value="" disabled>선택…</option>
-                    {caseList.map(c=> (<option key={c.name} value={c.name}>{c.name}</option>))}
-                  </select>
+        {/* PATCH-1: 12컬럼 레이아웃으로 정리 */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-12 gap-4">
+          {/* Case 관리 (작은 카드) */}
+          <div className="xl:col-span-4">
+            <HoverCard>
+              <CardHeader>
+                <CardTitle className="text-sm text-slate-600">Case 관리</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Label htmlFor="caseName" className="text-slate-700">Case 이름</Label>
+                <Input id="caseName" value={state.name} onChange={e=>setState(s=>({...s,name:e.target.value}))} placeholder="예: Case A (MVP)"/>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <Button onClick={saveCase} className="gap-2"><Save className="w-4 h-4"/> 저장</Button>
+                  <Button variant="secondary" onClick={()=>setState(defaultState)} className="gap-2"><LayoutGrid className="w-4 h-4"/> 예시 불러오기</Button>
+                  <Button variant="destructive" onClick={deleteCase} className="gap-2"><Trash2 className="w-4 h-4"/> 삭제</Button>
                 </div>
-              </div>
-            </CardContent>
-          </HoverCard>
+                <div>
+                  <Label className="text-slate-700">저장된 Case</Label>
+                  <div className="mt-2 flex items-center gap-2">
+                    <select className="w-full border rounded-lg px-3 py-2 focus:outline-none focus:ring focus:ring-indigo-200"
+                            onChange={(e)=>loadCase(e.target.value)}
+                            defaultValue="">
+                      <option value="" disabled>선택…</option>
+                      {caseList.map(c=> (<option key={c.name} value={c.name}>{c.name}</option>))}
+                    </select>
+                  </div>
+                </div>
+              </CardContent>
+            </HoverCard>
+          </div>
 
-          <HoverCard>
-            <CardHeader><CardTitle className="text-sm text-slate-600">요금/단가</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <MoneyInput label="구독 (Standard) 월 요금" value={state.pricing.standard}
-                          onChange={(v)=>setState(s=>({...s,pricing:{...s.pricing,standard:v}}))}/>
-              <MoneyInput label="인쇄 객단가 (1건 매출)" value={state.print.price}
-                          onChange={(v)=>setState(s=>({...s,print:{...s.print,price:v}}))}/>
-            </CardContent>
-          </HoverCard>
+          {/* 요금/단가 (작은 카드) */}
+          <div className="xl:col-span-4">
+            <HoverCard>
+              <CardHeader><CardTitle className="text-sm text-slate-600">요금/단가</CardTitle></CardHeader>
+              <CardContent className="space-y-3 min-h-[220px] flex flex-col justify-between">
+                <div className="space-y-3">
+                  <MoneyInput label="구독 (Standard) 월 요금" value={state.pricing.standard}
+                              onChange={(v)=>setState(s=>({...s,pricing:{...s.pricing,standard:v}}))}/>
+                  <MoneyInput label="인쇄 객단가 (1건 매출)" value={state.print.price}
+                              onChange={(v)=>setState(s=>({...s,print:{...s.print,price:v}}))}/>
+                </div>
+                <p className="text-xs text-slate-500">요금/단가는 시뮬레이션 전체에 즉시 반영됩니다.</p>
+              </CardContent>
+            </HoverCard>
+          </div>
 
-          <HoverCard>
-            <CardHeader><CardTitle className="text-sm text-slate-600">인쇄 원가</CardTitle></CardHeader>
-            <CardContent className="grid grid-cols-2 gap-3">
-              <MoneyInput label="외주 원가 (1건)" value={state.print.outsUnit}
-                          onChange={(v)=>setState(s=>({...s,print:{...s.print,outsUnit:v}}))}/>
-              <NumberInput label="외주 원가율 (배수)" value={state.print.outsRate}
-                           onChange={(v)=>setState(s=>({...s,print:{...s.print,outsRate:v}}))}/>
-              <MoneyInput label="리스 원가 (1건)" value={state.print.leaseUnit}
-                          onChange={(v)=>setState(s=>({...s,print:{...s.print,leaseUnit:v}}))}/>
-              <NumberInput label="리스 원가율 (배수)" value={state.print.leaseRate}
-                           onChange={(v)=>setState(s=>({...s,print:{...s.print,leaseRate:v}}))}/>
-            </CardContent>
-          </HoverCard>
+          {/* 인쇄 원가 (작은 카드) */}
+          <div className="xl:col-span-4">
+            <HoverCard>
+              <CardHeader><CardTitle className="text-sm text-slate-600">인쇄 원가</CardTitle></CardHeader>
+              <CardContent className="grid grid-cols-2 gap-3">
+                <MoneyInput label="외주 원가 (1건)" value={state.print.outsUnit}
+                            onChange={(v)=>setState(s=>({...s,print:{...s.print,outsUnit:v}}))}/>
+                <NumberInput label="외주 원가율 (배수)" value={state.print.outsRate}
+                            onChange={(v)=>setState(s=>({...s,print:{...s.print,outsRate:v}}))}/>
+                <MoneyInput label="리스 원가 (1건)" value={state.print.leaseUnit}
+                            onChange={(v)=>setState(s=>({...s,print:{...s.print,leaseUnit:v}}))}/>
+                <NumberInput label="리스 원가율 (배수)" value={state.print.leaseRate}
+                            onChange={(v)=>setState(s=>({...s,print:{...s.print,leaseRate:v}}))}/>
+              </CardContent>
+            </HoverCard>
+          </div>
 
-          <HoverCard>
-            <CardHeader><CardTitle className="text-sm text-slate-600">고정비</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <MoneyInput label="사무실 비용 (월)" value={state.fixed.office}
-                          onChange={(v)=>setState(s=>({...s,fixed:{...s.fixed,office:v}}))}/>
-              <MoneyInput label="마케팅 비용 (월)" value={state.fixed.mkt}
-                          onChange={(v)=>setState(s=>({...s,fixed:{...s.fixed,mkt:v}}))}/>
-              <MoneyInput label="법률/회계 비용 (월)" value={state.fixed.legal}
-                          onChange={(v)=>setState(s=>({...s,fixed:{...s.fixed,legal:v}}))}/>
-              <MoneyInput label="리스 월 금액 (장비 1대)" value={state.fixed.leaseMonthly}
-                          onChange={(v)=>setState(s=>({...s,fixed:{...s.fixed,leaseMonthly:v}}))}/>
-            </CardContent>
-          </HoverCard>
+          {/* 고정비 (작은 카드) */}
+          <div className="xl:col-span-4">
+            <HoverCard>
+              <CardHeader><CardTitle className="text-sm text-slate-600">고정비</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                <MoneyInput label="사무실 비용 (월)" value={state.fixed.office}
+                            onChange={(v)=>setState(s=>({...s,fixed:{...s.fixed,office:v}}))}/>
+                <MoneyInput label="마케팅 비용 (월)" value={state.fixed.mkt}
+                            onChange={(v)=>setState(s=>({...s,fixed:{...s.fixed,mkt:v}}))}/>
+                <MoneyInput label="법률/회계 비용 (월)" value={state.fixed.legal}
+                            onChange={(v)=>setState(s=>({...s,fixed:{...s.fixed,legal:v}}))}/>
+                <MoneyInput label="리스 월 금액 (장비 1대)" value={state.fixed.leaseMonthly}
+                            onChange={(v)=>setState(s=>({...s,fixed:{...s.fixed,leaseMonthly:v}}))}/>
+              </CardContent>
+            </HoverCard>
+          </div>
 
-          {/* 인프라 가정 설정 */}
-          <HoverCard>
-            <CardHeader>
-              <CardTitle className="text-sm text-slate-600">인프라 가정 (서버·스토리지·AI 자동 계산)</CardTitle>
-            </CardHeader>
+          {/* PATCH-2A: 인프라 분할 1/2 — 스토리지/서버 입력 (중간 카드) */}
+          <div className="xl:col-span-4">
+            <HoverCard>
+              <CardHeader>
+                <CardTitle className="text-sm text-slate-600">인프라 가정 · 스토리지/서버</CardTitle>
+              </CardHeader>
+              <CardContent className="grid grid-cols-3 gap-3">
+                <NumberInput
+                  label="1인당 월 사진 수"
+                  value={(state.infra?.photosPerUser ?? defaultInfra.photosPerUser)}
+                  onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), photosPerUser: Math.max(0, Math.round(v||0))}}))}
+                />
+                <NumberInput
+                  label="평균 용량(MB/장)"
+                  value={(state.infra?.avgPhotoMB ?? defaultInfra.avgPhotoMB)}
+                  onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), avgPhotoMB: Math.max(0, v||0)}}))}
+                />
+                <MoneyInput
+                  label="스토리지 단가(원/GB)"
+                  value={(state.infra?.storagePricePerGB ?? defaultInfra.storagePricePerGB)}
+                  onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), storagePricePerGB: Math.max(0, v||0)}}))}
+                />
+                <div className="col-span-3 text-xs text-slate-500">
+                  스토리지는 선형(GB×단가), 서버는 MAU 구간별 계단식으로 계산됩니다.
+                </div>
+              </CardContent>
+            </HoverCard>
+          </div>
 
-            <CardContent className="grid grid-cols-3 gap-3">
-              {/* 스토리지 입력 */}
-              <NumberInput
-                label="1인당 월 사진 수"
-                value={(state.infra?.photosPerUser ?? defaultInfra.photosPerUser)}
-                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), photosPerUser: Math.max(0, Math.round(v||0))}}))}
-              />
-              <NumberInput
-                label="평균 용량(MB/장)"
-                value={(state.infra?.avgPhotoMB ?? defaultInfra.avgPhotoMB)}
-                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), avgPhotoMB: Math.max(0, v||0)}}))}
-              />
-              <MoneyInput
-                label="스토리지 단가(원/GB)"
-                value={(state.infra?.storagePricePerGB ?? defaultInfra.storagePricePerGB)}
-                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), storagePricePerGB: Math.max(0, v||0)}}))}
-              />
+          {/* PATCH-2B: 인프라 분할 2/2 — AI 정책 (중간 카드, 접기/펼치기) */}
+          <div className="xl:col-span-4">
+            <HoverCard>
+              <CardHeader>
+                <CardTitle className="text-sm text-slate-600">AI 정책 (최적화 분기)</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-3 gap-3">
+                  <NumberInput
+                    label="AI 최적화 적용 시점(월)"
+                    value={state.infra?.ai?.optimizeMonth ?? defaultInfra.ai.optimizeMonth}
+                    onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), optimizeMonth: Math.max(1, Math.round(v||1))}}}))}
+                  />
+                  <NumberInput
+                    label="CV 대상 비율(중복·연사 그룹, 0~1)"
+                    step={0.05} min={0} max={1}
+                    value={state.infra?.ai?.cvGroupRate ?? defaultInfra.ai.cvGroupRate}
+                    onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), cvGroupRate: Math.max(0, Math.min(1, Number(v)||0))}}}))}
+                  />
+                  <div className="text-xs text-slate-500 self-center">
+                    CV는 <b>중복·연사 그룹</b>만, 캡션은 <b>하이라이트</b>만 처리합니다.
+                  </div>
+                </div>
 
-              {/* AI: 정책(최적화 시점/그룹비율) */}
-              <NumberInput
-                label="AI 최적화 적용 시점(월)"
-                value={state.infra?.ai?.optimizeMonth ?? defaultInfra.ai.optimizeMonth}
-                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), optimizeMonth: Math.max(1, Math.round(v||1))}}}))}
-              />
-              <NumberInput
-                label="CV 대상 비율(중복·연사 그룹, 0~1)"
-                step={0.05} min={0} max={1}
-                value={state.infra?.ai?.cvGroupRate ?? defaultInfra.ai.cvGroupRate}
-                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), cvGroupRate: Math.max(0, Math.min(1, Number(v)||0))}}}))}
-              />
-              <div className="text-xs text-slate-500 self-center">
-                CV는 해시/유사도 기반의 <b>중복·연사 그룹</b>만 처리, 캡션은 <b>하이라이트만</b> 처리합니다.
-              </div>
+                <Collapse title="최적화 이전 입력" defaultOpen={false}>
+                  <div className="grid grid-cols-3 gap-3 pt-2">
+                    <MoneyInput
+                      label="CV 단가(원/장, 이전)"
+                      value={state.infra?.ai?.pre?.cvPerImage ?? defaultInfra.ai.pre.cvPerImage}
+                      onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), pre:{...(s.infra?.ai?.pre||{}), cvPerImage: Math.max(0, v||0)}}}}))}
+                    />
+                    <MoneyInput
+                      label="캡션 단가(원/장, 이전)"
+                      value={state.infra?.ai?.pre?.captionPerImage ?? defaultInfra.ai.pre.captionPerImage}
+                      onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), pre:{...(s.infra?.ai?.pre||{}), captionPerImage: Math.max(0, v||0)}}}}))}
+                    />
+                    <NumberInput
+                      label="캡션 적용률(0~1, 이전)"
+                      step={0.05} min={0} max={1}
+                      value={state.infra?.ai?.pre?.captionRate ?? defaultInfra.ai.pre.captionRate}
+                      onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), pre:{...(s.infra?.ai?.pre||{}), captionRate: Math.max(0, Math.min(1, Number(v)||0))}}}}))}
+                    />
+                  </div>
+                </Collapse>
 
-              {/* AI: 최적화 이전 */}
-              <div className="col-span-3 pt-2 text-sm font-semibold text-slate-600">최적화 이전</div>
-              <MoneyInput
-                label="CV 단가(원/장, 이전)"
-                value={state.infra?.ai?.pre?.cvPerImage ?? defaultInfra.ai.pre.cvPerImage}
-                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), pre:{...(s.infra?.ai?.pre||{}), cvPerImage: Math.max(0, v||0)}}}}))}
-              />
-              <MoneyInput
-                label="캡션 단가(원/장, 이전)"
-                value={state.infra?.ai?.pre?.captionPerImage ?? defaultInfra.ai.pre.captionPerImage}
-                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), pre:{...(s.infra?.ai?.pre||{}), captionPerImage: Math.max(0, v||0)}}}}))}
-              />
-              <NumberInput
-                label="캡션 적용률(하이라이트, 0~1, 이전)"
-                step={0.05} min={0} max={1}
-                value={state.infra?.ai?.pre?.captionRate ?? defaultInfra.ai.pre.captionRate}
-                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), pre:{...(s.infra?.ai?.pre||{}), captionRate: Math.max(0, Math.min(1, Number(v)||0))}}}}))}
-              />
+                <Collapse title="최적화 이후 입력" defaultOpen={false}>
+                  <div className="grid grid-cols-3 gap-3 pt-2">
+                    <MoneyInput
+                      label="CV 단가(원/장, 이후)"
+                      value={state.infra?.ai?.post?.cvPerImage ?? defaultInfra.ai.post.cvPerImage}
+                      onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), post:{...(s.infra?.ai?.post||{}), cvPerImage: Math.max(0, v||0)}}}}))}
+                    />
+                    <MoneyInput
+                      label="캡션 단가(원/장, 이후)"
+                      value={state.infra?.ai?.post?.captionPerImage ?? defaultInfra.ai.post.captionPerImage}
+                      onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), post:{...(s.infra?.ai?.post||{}), captionPerImage: Math.max(0, v||0)}}}}))}
+                    />
+                    <NumberInput
+                      label="캡션 적용률(0~1, 이후)"
+                      step={0.05} min={0} max={1}
+                      value={state.infra?.ai?.post?.captionRate ?? defaultInfra.ai.post.captionRate}
+                      onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), post:{...(s.infra?.ai?.post||{}), captionRate: Math.max(0, Math.min(1, Number(v)||0))}}}}))}
+                    />
+                  </div>
+                </Collapse>
 
-              {/* AI: 최적화 이후 */}
-              <div className="col-span-3 pt-2 text-sm font-semibold text-slate-600">최적화 이후</div>
-              <MoneyInput
-                label="CV 단가(원/장, 이후)"
-                value={state.infra?.ai?.post?.cvPerImage ?? defaultInfra.ai.post.cvPerImage}
-                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), post:{...(s.infra?.ai?.post||{}), cvPerImage: Math.max(0, v||0)}}}}))}
-              />
-              <MoneyInput
-                label="캡션 단가(원/장, 이후)"
-                value={state.infra?.ai?.post?.captionPerImage ?? defaultInfra.ai.post.captionPerImage}
-                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), post:{...(s.infra?.ai?.post||{}), captionPerImage: Math.max(0, v||0)}}}}))}
-              />
-              <NumberInput
-                label="캡션 적용률(하이라이트, 0~1, 이후)"
-                step={0.05} min={0} max={1}
-                value={state.infra?.ai?.post?.captionRate ?? defaultInfra.ai.post.captionRate}
-                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), post:{...(s.infra?.ai?.post||{}), captionRate: Math.max(0, Math.min(1, Number(v)||0))}}}}))}
-              />
+                <div className="text-xs text-slate-500">
+                  AI 비용 = <code>MAU × 1인당 월 사진수 × [ CV단가×CV대상비율 + 캡션단가×하이라이트비율 ]</code>
+                </div>
+              </CardContent>
+            </HoverCard>
+          </div>
 
-              <div className="col-span-3 text-xs text-slate-500">
-                스토리지는 선형(GB×단가), 서버는 MAU 구간별 계단식, AI는 <code>MAU × 1인당 월 사진수 × [ CV단가×CV대상비율 + 캡션단가×하이라이트비율 ]</code>로 계산됩니다.
-              </div>
-            </CardContent>
-          </HoverCard>
+          {/* 시나리오 가중치 (작은 카드) */}
+          <div className="xl:col-span-4">
+            <HoverCard>
+              <CardHeader><CardTitle className="text-sm text-slate-600">시나리오 가중치</CardTitle></CardHeader>
+              <CardContent className="grid grid-cols-3 gap-3">
+                <NumberInput label="보수적" value={state.weights.con}
+                            onChange={(v)=>setState(s=>({...s,weights:{...s.weights,con:v}}))}/>
+                <NumberInput label="중립" value={state.weights.neu}
+                            onChange={(v)=>setState(s=>({...s,weights:{...s.weights,neu:v}}))}/>
+                <NumberInput label="공격적" value={state.weights.agg}
+                            onChange={(v)=>setState(s=>({...s,weights:{...s.weights,agg:v}}))}/>
+              </CardContent>
+            </HoverCard>
+          </div>
 
+          {/* 민감도 가정치 (작은 카드) */}
+          <div className="xl:col-span-4">
+            <HoverCard>
+              <CardHeader><CardTitle className="text-sm text-slate-600">민감도 가정치</CardTitle></CardHeader>
+              <CardContent className="grid grid-cols-2 gap-3">
+                <NumberInput
+                  label="전환율 민감도 β (0~1)"
+                  value={state.sensitivity?.beta ?? 0.6}
+                  onChange={(v)=>setState(s=>({...s, sensitivity:{...s.sensitivity, beta: Math.max(0, Math.min(1, v||0))}}))}
+                />
+                <NumberInput
+                  label="서버비 규모효율 γ (0~1)"
+                  value={state.sensitivity?.gamma ?? 0.4}
+                  onChange={(v)=>setState(s=>({...s, sensitivity:{...s.sensitivity, gamma: Math.max(0, Math.min(1, v||0))}}))}
+                />
+              </CardContent>
+            </HoverCard>
+          </div>
 
-          {/* 시나리오 가중치 설정 */}
-          <HoverCard>
-            <CardHeader><CardTitle className="text-sm text-slate-600">시나리오 가중치</CardTitle></CardHeader>
-            <CardContent className="grid grid-cols-3 gap-3">
-              <NumberInput label="보수적" value={state.weights.con}
-                           onChange={(v)=>setState(s=>({...s,weights:{...s.weights,con:v}}))}/>
-              <NumberInput label="중립" value={state.weights.neu}
-                           onChange={(v)=>setState(s=>({...s,weights:{...s.weights,neu:v}}))}/>
-              <NumberInput label="공격적" value={state.weights.agg}
-                           onChange={(v)=>setState(s=>({...s,weights:{...s.weights,agg:v}}))}/>
-            </CardContent>
-          </HoverCard>
-
-          <HoverCard>
-            <CardHeader><CardTitle className="text-sm text-slate-600">민감도 가정치</CardTitle></CardHeader>
-            <CardContent className="grid grid-cols-2 gap-3">
-              <NumberInput
-                label="전환율 민감도 β (0~1)"
-                value={state.sensitivity?.beta ?? 0.6}
-                onChange={(v)=>setState(s=>({...s, sensitivity:{...s.sensitivity, beta: Math.max(0, Math.min(1, v||0))}}))}
-              />
-              <NumberInput
-                label="서버비 규모효율 γ (0~1)"
-                value={state.sensitivity?.gamma ?? 0.4}
-                onChange={(v)=>setState(s=>({...s, sensitivity:{...s.sensitivity, gamma: Math.max(0, Math.min(1, v||0))}}))}
-              />
-            </CardContent>
-          </HoverCard>
-
-          <HoverCard>
-            <CardHeader><CardTitle className="text-sm text-slate-600">기간(개월) · MAU 구간</CardTitle></CardHeader>
-            <CardContent className="grid grid-cols-3 gap-3">
-              <NumberInput label="시작 (개월차)" value={periodDraft.start}
-                           onChange={v=>setPeriodDraft(d=>({...d,start:Math.max(1,Math.round(v||1))}))}/>
-              <NumberInput label="종료 (개월차)" value={periodDraft.end}
-                           onChange={v=>setPeriodDraft(d=>({...d,end:Math.max(d.start,Math.round(v||d.start))}))}/>
-              <NumberInput label="MAU" value={periodDraft.mau}
-                           onChange={v=>setPeriodDraft(d=>({...d,mau:Math.max(0,Math.round(v||0))}))}/>
-              <div className="col-span-3 flex gap-2">
-                <Button variant="secondary" className="gap-2" onClick={()=>setState(s=>({...s,periods:[...s.periods,{id:uid(),start:periodDraft.start,end:periodDraft.end,mau:periodDraft.mau,subCR:0.03,prtCR:0.05,server:500_000,hasWage:false,avgWage:3_000_000,heads:0,hasOffice:false,hasLease:false,leaseCnt:0}]}))}><Plus className="w-4 h-4"/> 구간 추가</Button>
-                <Button variant="outline" onClick={()=>setState(s=>({...s,periods:[]}))}>초기화</Button>
-              </div>
-              <p className="text-xs text-slate-500">구간은 아래 ② 활성 사용자 시나리오 표의 첫 두 열(기간·MAU)와 자동 연동됩니다.</p>
-            </CardContent>
-          </HoverCard>
+          {/* 기간(개월)·MAU 구간 (작은~중간) */}
+          <div className="xl:col-span-4">
+            <HoverCard>
+              <CardHeader><CardTitle className="text-sm text-slate-600">기간(개월) · MAU 구간</CardTitle></CardHeader>
+              <CardContent className="grid grid-cols-3 gap-3">
+                <NumberInput label="시작 (개월차)" value={periodDraft.start}
+                            onChange={v=>setPeriodDraft(d=>({...d,start:Math.max(1,Math.round(v||1))}))}/>
+                <NumberInput label="종료 (개월차)" value={periodDraft.end}
+                            onChange={v=>setPeriodDraft(d=>({...d,end:Math.max(d.start,Math.round(v||d.start))}))}/>
+                <NumberInput label="MAU" value={periodDraft.mau}
+                            onChange={v=>setPeriodDraft(d=>({...d,mau:Math.max(0,Math.round(v||0))}))}/>
+                <div className="col-span-3 flex gap-2">
+                  <Button variant="secondary" className="gap-2" onClick={()=>setState(s=>({...s,periods:[...s.periods,{id:uid(),start:periodDraft.start,end:periodDraft.end,mau:periodDraft.mau,subCR:0.03,prtCR:0.05,server:500_000,hasWage:false,avgWage:3_000_000,heads:0,hasOffice:false,hasLease:false,leaseCnt:0}]}))}><Plus className="w-4 h-4"/> 구간 추가</Button>
+                  <Button variant="outline" onClick={()=>setState(s=>({...s,periods:[]}))}>초기화</Button>
+                </div>
+                <p className="text-xs text-slate-500">구간은 아래 ② 활성 사용자 시나리오 표의 첫 두 열(기간·MAU)와 자동 연동됩니다.</p>
+              </CardContent>
+            </HoverCard>
+          </div>
         </div>
+
 
         {/* === BM 활성화 & 파라미터 (간단) === */}
         <Card>
@@ -799,6 +861,38 @@ const deleteCase = async () => {
             <CardTitle>BM 활성화(개월차) & 간단 파라미터</CardTitle>
           </CardHeader>
           <CardContent className="grid grid-cols-3 gap-4">
+            {/* PATCH-3-UI: BM 사용 토글 */}
+            <div className="col-span-3 border rounded-xl p-3 bg-slate-50">
+              <div className="text-sm font-medium text-slate-700 mb-2">BM 추가(보조 B2C, B2B, API) 사용 여부</div>
+              <div className="flex flex-wrap gap-6">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <Switch
+                    checked={state.bmSimple?.enabled?.auxB2C ?? true}
+                    onCheckedChange={(v)=>setState(s=>({...s, bmSimple:{...s.bmSimple, enabled:{...s.bmSimple.enabled, auxB2C:v}}}))}
+                    aria-label="보조 B2C 사용"
+                  />
+                  <span>보조 B2C (프리미엄·광고·제휴)</span>
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <Switch
+                    checked={state.bmSimple?.enabled?.b2b ?? true}
+                    onCheckedChange={(v)=>setState(s=>({...s, bmSimple:{...s.bmSimple, enabled:{...s.bmSimple.enabled, b2b:v}}}))}
+                    aria-label="B2B 사용"
+                  />
+                  <span>B2B</span>
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <Switch
+                    checked={state.bmSimple?.enabled?.api ?? true}
+                    onCheckedChange={(v)=>setState(s=>({...s, bmSimple:{...s.bmSimple, enabled:{...s.bmSimple.enabled, api:v}}}))}
+                    aria-label="API 사용"
+                  />
+                  <span>API</span>
+                </label>
+              </div>
+              <p className="text-xs text-slate-500 mt-2">모두 끄면 기본 B2C(구독·인쇄)만 계산됩니다.</p>
+            </div>
+
             {/* 단계별 활성화 월 */}
             <div>
               <Label>보조(B2C) 시작 월 (프리미엄·광고·제휴)</Label>
@@ -917,6 +1011,7 @@ const deleteCase = async () => {
             </div>
           </CardContent>
         </Card>
+
 
 
         {/* (2) 활성 사용자 시나리오 */}
