@@ -117,22 +117,54 @@ function storageCostByMAU(
   return Math.round(storageGB * pricePerGB);
 }
 
-// 통합 추정자: 서버비 + 스토리지비 + AI비용
+
+// 내부 유틸: (month, infra)에서 AI 파라미터 해석(최적화 이전/이후 분기 + 하위호환)
+function resolveAiParams(month:number, infra:any){
+  // 새 구조 존재 시
+  if (infra?.ai) {
+    const opt = infra.ai;
+    const phase = (month < (opt.optimizeMonth ?? Infinity)) ? (opt.pre||{}) : (opt.post||{});
+    const cvGroupRate = Math.max(0, Math.min(1, opt.cvGroupRate ?? 1));
+    const cvPerImage = Number(phase.cvPerImage ?? 0);
+    const captionPerImage = Number(phase.captionPerImage ?? 0);
+    const captionRate = Math.max(0, Math.min(1, Number(phase.captionRate ?? 0)));
+    return { cvGroupRate, cvPerImage, captionPerImage, captionRate };
+  }
+  // 하위호환: 예전 평탄 입력을 새 정책으로 해석
+  const cvGroupRate = 1.0; // 과거엔 전량 처리 가정
+  const cvPerImage = Number(infra?.aiCvPerImage ?? 0);
+  const captionPerImage = Number(infra?.aiCaptionPerImage ?? 0);
+  const captionRate = Math.max(0, Math.min(1, Number(infra?.aiCaptionRate ?? 0)));
+  return { cvGroupRate, cvPerImage, captionPerImage, captionRate };
+}
+
+// AI 비용 = MAU × 1인당 월 사진수 × [ (CV단가 × CV대상비율) + (캡션단가 × 하이라이트비율) ]
 function estimateAICost(
+  month:number,
   mau: number,
   photosPerUser: number,
-  ai: { aiCvPerImage: number; aiCaptionPerImage: number; aiCaptionRate: number }
+  infra:any
 ){
-  const aiPerImage = (ai.aiCvPerImage ?? 0) + (ai.aiCaptionRate ?? 0) * (ai.aiCaptionPerImage ?? 0);
+  const { cvGroupRate, cvPerImage, captionPerImage, captionRate } = resolveAiParams(month, infra);
+  const aiPerImage = (cvPerImage * cvGroupRate) + (captionPerImage * captionRate);
   return Math.max(0, Math.round(mau * photosPerUser * aiPerImage));
 }
 
+// 통합 추정자: 서버비 + 스토리지비 + AI비용
 function estimateInfraCost(
+  month:number,
   mau:number,
   infra:{
     photosPerUser:number;
     avgPhotoMB:number;
     storagePricePerGB:number;
+    ai?: {
+      optimizeMonth:number;
+      cvGroupRate:number;
+      pre:{ cvPerImage:number; captionPerImage:number; captionRate:number; };
+      post:{ cvPerImage:number; captionPerImage:number; captionRate:number; };
+    };
+    // 하위호환 평탄 필드
     aiCvPerImage?:number;
     aiCaptionPerImage?:number;
     aiCaptionRate?:number;
@@ -140,13 +172,10 @@ function estimateInfraCost(
 ){
   const serverCost  = serverCostByMAU(mau);
   const storageCost = storageCostByMAU(mau, infra.photosPerUser, infra.avgPhotoMB, infra.storagePricePerGB);
-  const aiCost      = estimateAICost(mau, infra.photosPerUser, {
-    aiCvPerImage: infra.aiCvPerImage ?? 0,
-    aiCaptionPerImage: infra.aiCaptionPerImage ?? 0,
-    aiCaptionRate: infra.aiCaptionRate ?? 0,
-  });
+  const aiCost      = estimateAICost(month, mau, infra.photosPerUser, infra);
   return { serverCost, storageCost, aiCost, total: serverCost + storageCost + aiCost };
 }
+
 
 
 
@@ -171,11 +200,32 @@ const defaultInfra = {
   avgPhotoMB: 4,         // 사진 1장 평균 용량(MB)  => 약 3.91GB/인·월
   storagePricePerGB: 30, // 스토리지 단가(원/GB)   => S3 Standard ≈ 30원/GB
 
-  // 🔥 AI 계산 입력 (2번 파일 'AI 비용 계산.md' 기본값)
-  aiCvPerImage: 3,       // 품질/중복 제거 단가(원/장)
-  aiCaptionPerImage: 7,  // 캡션 생성 단가(원/장)
-  aiCaptionRate: 1.0     // 캡션 적용률(0~1)
+  // AI 정책 (최적화 시점 분기 + 그룹/적용율 명시)
+  ai: {
+    optimizeMonth: 13,     // ← 이 달부터 "이후" 단가/적용율 사용
+    cvGroupRate: 0.35,     // ← CV(품질/중복) 적용 대상: 중복/연사 그룹의 비율(0~1)
+
+    // 최적화 이전 (런칭~optimizeMonth-1)
+    pre: {
+      cvPerImage: 3.0,       // 중복/연사 그룹에만 적용될 CV 단가(원/장)
+      captionPerImage: 7.0,  // 캡션 단가(원/장)
+      captionRate: 0.15,     // 하이라이트 비율(0~1) — 하이라이트만 캡션
+    },
+
+    // 최적화 이후 (optimizeMonth~)
+    post: {
+      cvPerImage: 1.5,       // 모델/파이프라인 최적화 후 CV 단가
+      captionPerImage: 4.0,  // 프롬프트/배치/캐시 최적화 후 캡션 단가
+      captionRate: 0.10,     // 하이라이트 자동선정 정밀도↑로 캡션 비율 소폭 축소
+    },
+  },
+
+  // ✅ 하위호환(이전 상태값이 있는 사용자를 위한 fallback 입력; UI에서는 사용하지 않음)
+  aiCvPerImage: 3,
+  aiCaptionPerImage: 7,
+  aiCaptionRate: 1.0,
 } as const;
+
 
 
 // 3) 어떤 저장본(payload)이 오더라도 기본값을 "깊게" 주입
@@ -616,6 +666,7 @@ const deleteCase = async () => {
             <CardHeader>
               <CardTitle className="text-sm text-slate-600">인프라 가정 (서버·스토리지·AI 자동 계산)</CardTitle>
             </CardHeader>
+
             <CardContent className="grid grid-cols-3 gap-3">
               {/* 스토리지 입력 */}
               <NumberInput
@@ -634,31 +685,66 @@ const deleteCase = async () => {
                 onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), storagePricePerGB: Math.max(0, v||0)}}))}
               />
 
-              {/* AI 입력 */}
-              <MoneyInput
-                label="AI: 품질/중복 제거(원/장)"
-                value={(state.infra?.aiCvPerImage ?? defaultInfra.aiCvPerImage)}
-                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), aiCvPerImage: Math.max(0, v||0)}}))}
-              />
-              <MoneyInput
-                label="AI: 캡션(원/장)"
-                value={(state.infra?.aiCaptionPerImage ?? defaultInfra.aiCaptionPerImage)}
-                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), aiCaptionPerImage: Math.max(0, v||0)}}))}
+              {/* AI: 정책(최적화 시점/그룹비율) */}
+              <NumberInput
+                label="AI 최적화 적용 시점(월)"
+                value={state.infra?.ai?.optimizeMonth ?? defaultInfra.ai.optimizeMonth}
+                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), optimizeMonth: Math.max(1, Math.round(v||1))}}}))}
               />
               <NumberInput
-                label="AI: 캡션 적용률(0~1)"
-                step={0.05}
-                min={0}
-                max={1}
-                value={(state.infra?.aiCaptionRate ?? defaultInfra.aiCaptionRate)}
-                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), aiCaptionRate: Math.max(0, Math.min(1, Number(v)||0))}}))}
+                label="CV 대상 비율(중복·연사 그룹, 0~1)"
+                step={0.05} min={0} max={1}
+                value={state.infra?.ai?.cvGroupRate ?? defaultInfra.ai.cvGroupRate}
+                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), cvGroupRate: Math.max(0, Math.min(1, Number(v)||0))}}}))}
+              />
+              <div className="text-xs text-slate-500 self-center">
+                CV는 해시/유사도 기반의 <b>중복·연사 그룹</b>만 처리, 캡션은 <b>하이라이트만</b> 처리합니다.
+              </div>
+
+              {/* AI: 최적화 이전 */}
+              <div className="col-span-3 pt-2 text-sm font-semibold text-slate-600">최적화 이전</div>
+              <MoneyInput
+                label="CV 단가(원/장, 이전)"
+                value={state.infra?.ai?.pre?.cvPerImage ?? defaultInfra.ai.pre.cvPerImage}
+                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), pre:{...(s.infra?.ai?.pre||{}), cvPerImage: Math.max(0, v||0)}}}}))}
+              />
+              <MoneyInput
+                label="캡션 단가(원/장, 이전)"
+                value={state.infra?.ai?.pre?.captionPerImage ?? defaultInfra.ai.pre.captionPerImage}
+                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), pre:{...(s.infra?.ai?.pre||{}), captionPerImage: Math.max(0, v||0)}}}}))}
+              />
+              <NumberInput
+                label="캡션 적용률(하이라이트, 0~1, 이전)"
+                step={0.05} min={0} max={1}
+                value={state.infra?.ai?.pre?.captionRate ?? defaultInfra.ai.pre.captionRate}
+                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), pre:{...(s.infra?.ai?.pre||{}), captionRate: Math.max(0, Math.min(1, Number(v)||0))}}}}))}
+              />
+
+              {/* AI: 최적화 이후 */}
+              <div className="col-span-3 pt-2 text-sm font-semibold text-slate-600">최적화 이후</div>
+              <MoneyInput
+                label="CV 단가(원/장, 이후)"
+                value={state.infra?.ai?.post?.cvPerImage ?? defaultInfra.ai.post.cvPerImage}
+                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), post:{...(s.infra?.ai?.post||{}), cvPerImage: Math.max(0, v||0)}}}}))}
+              />
+              <MoneyInput
+                label="캡션 단가(원/장, 이후)"
+                value={state.infra?.ai?.post?.captionPerImage ?? defaultInfra.ai.post.captionPerImage}
+                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), post:{...(s.infra?.ai?.post||{}), captionPerImage: Math.max(0, v||0)}}}}))}
+              />
+              <NumberInput
+                label="캡션 적용률(하이라이트, 0~1, 이후)"
+                step={0.05} min={0} max={1}
+                value={state.infra?.ai?.post?.captionRate ?? defaultInfra.ai.post.captionRate}
+                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), ai:{...(s.infra?.ai||{}), post:{...(s.infra?.ai?.post||{}), captionRate: Math.max(0, Math.min(1, Number(v)||0))}}}}))}
               />
 
               <div className="col-span-3 text-xs text-slate-500">
-                스토리지는 선형(GB×단가), 서버는 MAU 구간별 계단식, AI는 <code>MAU × 1인당 월 사진수 × (cv + 캡션율×캡션)</code>로 계산됩니다.
+                스토리지는 선형(GB×단가), 서버는 MAU 구간별 계단식, AI는 <code>MAU × 1인당 월 사진수 × [ CV단가×CV대상비율 + 캡션단가×하이라이트비율 ]</code>로 계산됩니다.
               </div>
             </CardContent>
           </HoverCard>
+
 
           {/* 시나리오 가중치 설정 */}
           <HoverCard>
@@ -900,8 +986,8 @@ const deleteCase = async () => {
 
                       {/* 서버비용 */}
                       {(() => {
-                        const safeState = withDefaults(state); // ✅ 표 렌더링 시에도 보수적 머지
-                        const est = estimateInfraCost(p.mau, safeState.infra);
+                        const safeState = withDefaults(state);
+                        const est = estimateInfraCost(p.start, p.mau, safeState.infra);
                         return (
                           <>
                             <td className="px-3 py-2 text-right align-middle">
@@ -1651,19 +1737,22 @@ function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:nu
     const unitVar   = p.hasLease ? leaseCost : outsCost;
     const varCostPrt= prtOrders * unitVar;
 
-    // 🔥 자동 인프라 비용 계산 (서버 + 스토리지 + AI)
+    // 자동 인프라 비용 계산 (서버 + 스토리지 + AI)
     const infraInput = (state.infra ?? defaultInfra);
-    const infraEst = estimateInfraCost(mau, {
-      photosPerUser: infraInput.photosPerUser,
-      avgPhotoMB: infraInput.avgPhotoMB,
-      storagePricePerGB: infraInput.storagePricePerGB,
-      aiCvPerImage: infraInput.aiCvPerImage,
-      aiCaptionPerImage: infraInput.aiCaptionPerImage,
-      aiCaptionRate: infraInput.aiCaptionRate,
+    const infraEst = estimateInfraCost(m, mau, {
+      photosPerUser: infraInput.photosPerUser ?? defaultInfra.photosPerUser,
+      avgPhotoMB: infraInput.avgPhotoMB ?? defaultInfra.avgPhotoMB,
+      storagePricePerGB: infraInput.storagePricePerGB ?? defaultInfra.storagePricePerGB,
+      // 새 구조 그대로 전달(없으면 기본값이 resolveAiParams에서 하위호환 처리)
+      ai: infraInput.ai,
+      aiCvPerImage: infraInput.aiCvPerImage,            // fallback
+      aiCaptionPerImage: infraInput.aiCaptionPerImage,  // fallback
+      aiCaptionRate: infraInput.aiCaptionRate,          // fallback
     });
     const serverAuto   = infraEst.serverCost;
     const storageCost  = infraEst.storageCost;
     const aiCost       = infraEst.aiCost;
+
 
     // 고정비(서버·스토리지·AI 자동반영 + 인건비/사무실/리스/마케팅/법무)
     const wage     = p.hasWage   ? (p.avgWage * p.heads) : 0;
