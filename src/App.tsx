@@ -84,6 +84,38 @@ function adjustStateForScenario(base:any, mult:number, beta:number, gamma:number
 }
 
 /*************************
+ * BM Simple 기본값 & 머지 유틸
+ *************************/
+
+// 1) BM Simple의 "기본값" (여기를 IR 가정에 맞게 조정 가능)
+const defaultBmSimple = {
+  activation: { auxStartMonth: 13, b2bStartMonth: 25, apiStartMonth: 31 },
+  premium:   { price: 14900,  upsellRate: 0.10, costRate: 0.10 },
+  ads:       { cpm: 10000, pvPerUser: 5, sponsorFee: 5_000_000, sponsorPerQuarter: 1, costRate: 0.15 },
+  affiliate: { aov: 30000, conv: 0.01, takeRate: 0.20, costRate: 0.00 },
+  b2b:       { pricePerDeal: 300000, dealsPerQuarter: 2, costRate: 0.30 },
+  api:       { callsPerMonth: 5_000_000, pricePerCallUSD: 0.01, fxKRWPerUSD: 1300, costRate: 0.40 },
+} as const;
+
+// 2) 아무 저장본(payload)에든 기본값을 "깊게" 주입하는 함수
+function withBmDefaults<T extends { bmSimple?: any }>(s: T): T {
+  const src = s?.bmSimple || {};
+  return {
+    ...s,
+    bmSimple: {
+      ...defaultBmSimple,
+      ...src,
+      activation: { ...defaultBmSimple.activation, ...(src.activation||{}) },
+      premium:    { ...defaultBmSimple.premium,    ...(src.premium||{}) },
+      ads:        { ...defaultBmSimple.ads,        ...(src.ads||{}) },
+      affiliate:  { ...defaultBmSimple.affiliate,  ...(src.affiliate||{}) },
+      b2b:        { ...defaultBmSimple.b2b,        ...(src.b2b||{}) },
+      api:        { ...defaultBmSimple.api,        ...(src.api||{}) },
+    }
+  } as T;
+}
+
+/*************************
  * 초기 상태
  *************************/
 function uid(){ return Math.random().toString(36).slice(2,9); }
@@ -123,7 +155,11 @@ const defaultState = {
     { id: uid(), start: 25, end: 30, mau: 30_000, subCR: 0.05, prtCR: 0.10, server: 7_500_000, hasWage: true, avgWage: 3_500_000, heads: 6, hasOffice: true, hasLease: true,  leaseCnt: 3 },
     { id: uid(), start: 31, end: 36, mau: 50_000, subCR: 0.05, prtCR: 0.08, server: 13_000_000, hasWage: true, avgWage: 4_000_000, heads: 6, hasOffice: true, hasLease: true, leaseCnt: 4 },
   ],
+
+  // 간단 BM (IR 단순화용) — 위의 defaultBmSimple을 그대로 참조
+  bmSimple: { ...defaultBmSimple },
 };
+
 
 /*************************
  * 메인 컴포넌트
@@ -142,23 +178,22 @@ export default function FinancialCalculatorApp(){
   const versionRef = useRef<number>(0);
 
   // ① 목록 + (선택) 현재 state 불러오기
-  const fetchCaseList = async () => {
-    const { data, error } = await supabase
-      .from('shared_cases')
-      .select('name, payload, version, updated_at')
-      .eq('slug', SHARE_SLUG)
-      .order('updated_at', { ascending: false });
+const fetchCaseList = async () => {
+  const { data, error } = await supabase
+    .from('shared_cases')
+    .select('name, payload, version, updated_at')
+    .eq('slug', SHARE_SLUG)
+    .order('updated_at', { ascending: false });
 
-    if (!error && data) {
-      setCaseList(data.map(r => ({ name: r.name, ...r.payload })));
-      // 현재 state.name 과 동일한 케이스가 있으면 그 payload로 동기화
-      const cur = data.find(d => d.name === state.name);
-      if (cur?.payload) {
-        setState(cur.payload);
-        versionRef.current = cur.version ?? 0;
-      }
+  if (!error && data) {
+    setCaseList(data.map(r => ({ name: r.name, ...withBmDefaults(r.payload) })));
+    const cur = data.find(d => d.name === state.name);
+    if (cur?.payload) {
+      setState(withBmDefaults(cur.payload));
+      versionRef.current = cur.version ?? 0;
     }
-  };
+  }
+};
 
   useEffect(() => {
     fetchCaseList();
@@ -206,6 +241,8 @@ export default function FinancialCalculatorApp(){
   const cumChart = useRef<ChartType | null>(null);
   const monthlyChart = useRef<ChartType | null>(null);
   const scChart = useRef<ChartType | null>(null);
+  const revStackRef = useRef<HTMLCanvasElement | null>(null);
+  const revStackChart = useRef<ChartType | null>(null);
 
   // 시뮬레이션 버튼
   const runSimulation = ()=>{ setSimTick(t=>t+1); setTab('chart'); };
@@ -214,17 +251,22 @@ export default function FinancialCalculatorApp(){
   useEffect(()=>{
     const labels = months.map(r=>`${r.month}M`);
     const yFmt = (v: string | number) => KRW.fmt(typeof v === "number" ? v : Number(v));
-    // 누적 손익
+
+    // 누적 손익 (라인)
     if (cumChart.current) cumChart.current.destroy();
     if (cumRef.current) {
       cumChart.current = new Chart(cumRef.current, {
         type: "line",
-        data: { labels, datasets: [{ label: "누적손익", data: months.map(r => r.cum) }] },
-        options: { responsive: true, maintainAspectRatio:false, plugins: { legend: { display: false } }, scales: { y: { ticks: { callback: yFmt } } } }
+        data: { labels, datasets: [{ label: "누적손익", data: months.map(r => r.cum || 0) }] },
+        options: {
+          responsive: true, maintainAspectRatio:false,
+          plugins: { legend: { display: false } },
+          scales: { y: { ticks: { callback: yFmt } } }
+        }
       });
     }
 
-    // 월 매출/비용
+    // 월 매출/비용/순이익 (라인) — 기존 유지
     if (monthlyChart.current) monthlyChart.current.destroy();
     if (monthlyRef.current) {
       monthlyChart.current = new Chart(monthlyRef.current, {
@@ -232,17 +274,48 @@ export default function FinancialCalculatorApp(){
         data: {
           labels,
           datasets: [
-            { label: "매출", data: months.map(r => r.rev) },
-            { label: "변동비", data: months.map(r => r.varCost) },
-            { label: "고정비", data: months.map(r => r.fixed) },
-            { label: "순이익", data: months.map(r => r.net) }
+            { label: "매출",   data: months.map(r => r.rev || 0) },
+            { label: "변동비", data: months.map(r => r.varCost || 0) },
+            { label: "고정비", data: months.map(r => r.fixed || 0) },
+            { label: "순이익", data: months.map(r => r.net || 0) },
           ]
         },
-        options: { responsive: true, maintainAspectRatio:false, scales: { y: { ticks: { callback: yFmt } } } }
+        options: {
+          responsive: true, maintainAspectRatio:false,
+          scales: { y: { ticks: { callback: yFmt } } }
+        }
       });
     }
 
-    // 연도별 시나리오
+    // 매출 구성 (스택 바) — 신규 추가
+    if (revStackChart.current) revStackChart.current.destroy();
+    if (revStackRef.current) {
+      revStackChart.current = new Chart(revStackRef.current, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            { label: "구독",     data: months.map(r => r.subRev || 0) },
+            { label: "인쇄",     data: months.map(r => r.prtRev || 0) },
+            { label: "Premium",  data: months.map(r => r.rev_premium || 0) },
+            { label: "Ads",      data: months.map(r => r.rev_ads || 0) },
+            { label: "Affiliate",data: months.map(r => r.rev_affiliate || 0) },
+            { label: "B2B",      data: months.map(r => r.rev_b2b || 0) },
+            { label: "API",      data: months.map(r => r.rev_api || 0) },
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio:false,
+          plugins: { legend: { position: "top" } },
+          scales: {
+            x: { stacked: true },
+            y: { stacked: true, ticks: { callback: yFmt } }
+          }
+        }
+      });
+    }
+
+    // 연도별 시나리오 (바)
     if (scChart.current) scChart.current.destroy();
     if (scRef.current) {
       const sc = calcScenarioYears(state);
@@ -252,17 +325,26 @@ export default function FinancialCalculatorApp(){
         data: {
           labels: yLabels,
           datasets: [
-            { label: "보수적 순이익", data: sc.conservative.map(r => r.net) },
-            { label: "중립 순이익", data: sc.neutral.map(r => r.net) },
-            { label: "공격적 순이익", data: sc.aggressive.map(r => r.net) }
+            { label: "보수적 순이익", data: sc.conservative.map(r => r.net || 0) },
+            { label: "중립 순이익",   data: sc.neutral.map(r => r.net || 0) },
+            { label: "공격적 순이익", data: sc.aggressive.map(r => r.net || 0) }
           ]
         },
-        options: { responsive: true, maintainAspectRatio:false, scales: { y: { ticks: { callback: yFmt } } } }
+        options: {
+          responsive: true, maintainAspectRatio:false,
+          scales: { y: { ticks: { callback: yFmt } } }
+        }
       });
     }
 
-    return ()=>{ cumChart.current?.destroy(); monthlyChart.current?.destroy(); scChart.current?.destroy(); };
+    return ()=>{
+      cumChart.current?.destroy();
+      monthlyChart.current?.destroy();
+      revStackChart.current?.destroy();
+      scChart.current?.destroy();
+    };
   }, [months, state, simTick]);
+
 
   // 저장/불러오기
 const saveCase = async () => {
@@ -303,7 +385,7 @@ const loadCase = async (name: string) => {
     alert('해당 Case를 찾을 수 없습니다');
     return;
   }
-  setState(data.payload);
+  setState(withBmDefaults(data.payload));
   versionRef.current = data.version ?? 0;
 };
 
@@ -480,6 +562,132 @@ const deleteCase = async () => {
             </CardContent>
           </HoverCard>
         </div>
+
+        {/* === [NEW] BM 활성화 & 파라미터 (간단) === */}
+        <Card>
+          <CardHeader>
+            <CardTitle>BM 활성화(개월차) & 간단 파라미터</CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-3 gap-4">
+            {/* 단계별 활성화 월 */}
+            <div>
+              <Label>보조(B2C) 시작 월 (프리미엄·광고·제휴)</Label>
+              <Input type="number" value={state.bmSimple.activation.auxStartMonth}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, activation:{...s.bmSimple.activation, auxStartMonth: Number(e.target.value)||1}}}))}/>
+            </div>
+            <div>
+              <Label>확장(B2B) 시작 월</Label>
+              <Input type="number" value={state.bmSimple.activation.b2bStartMonth}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, activation:{...s.bmSimple.activation, b2bStartMonth: Number(e.target.value)||1}}}))}/>
+            </div>
+            <div>
+              <Label>확장(API) 시작 월</Label>
+              <Input type="number" value={state.bmSimple.activation.apiStartMonth}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, activation:{...s.bmSimple.activation, apiStartMonth: Number(e.target.value)||1}}}))}/>
+            </div>
+
+            {/* 프리미엄 */}
+            <div>
+              <Label>프리미엄 가격(원)</Label>
+              <Input type="number" value={state.bmSimple.premium.price}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, premium:{...s.bmSimple.premium, price: Number(e.target.value)||0}}}))}/>
+            </div>
+            <div>
+              <Label>업셀 비율(구독자 중)</Label>
+              <Input type="number" step="0.01" value={state.bmSimple.premium.upsellRate}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, premium:{...s.bmSimple.premium, upsellRate: Number(e.target.value)||0}}}))}/>
+            </div>
+            <div>
+              <Label>프리미엄 비용비율</Label>
+              <Input type="number" step="0.01" value={state.bmSimple.premium.costRate}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, premium:{...s.bmSimple.premium, costRate: Number(e.target.value)||0}}}))}/>
+            </div>
+
+            {/* 광고/스폰서 */}
+            <div>
+              <Label>CPM(원/1000뷰)</Label>
+              <Input type="number" value={state.bmSimple.ads.cpm}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, ads:{...s.bmSimple.ads, cpm: Number(e.target.value)||0}}}))}/>
+            </div>
+            <div>
+              <Label>1인당 페이지뷰/월</Label>
+              <Input type="number" value={state.bmSimple.ads.pvPerUser}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, ads:{...s.bmSimple.ads, pvPerUser: Number(e.target.value)||0}}}))}/>
+            </div>
+            <div>
+              <Label>스폰서 금액(분기)</Label>
+              <Input type="number" value={state.bmSimple.ads.sponsorFee}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, ads:{...s.bmSimple.ads, sponsorFee: Number(e.target.value)||0}}}))}/>
+            </div>
+            <div>
+              <Label>스폰서 건수/분기</Label>
+              <Input type="number" value={state.bmSimple.ads.sponsorPerQuarter}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, ads:{...s.bmSimple.ads, sponsorPerQuarter: Number(e.target.value)||0}}}))}/>
+            </div>
+            <div>
+              <Label>광고 비용비율</Label>
+              <Input type="number" step="0.01" value={state.bmSimple.ads.costRate}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, ads:{...s.bmSimple.ads, costRate: Number(e.target.value)||0}}}))}/>
+            </div>
+
+            {/* 제휴 */}
+            <div>
+              <Label>AOV(원)</Label>
+              <Input type="number" value={state.bmSimple.affiliate.aov}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, affiliate:{...s.bmSimple.affiliate, aov: Number(e.target.value)||0}}}))}/>
+            </div>
+            <div>
+              <Label>구매 전환율</Label>
+              <Input type="number" step="0.001" value={state.bmSimple.affiliate.conv}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, affiliate:{...s.bmSimple.affiliate, conv: Number(e.target.value)||0}}}))}/>
+            </div>
+            <div>
+              <Label>수수료율</Label>
+              <Input type="number" step="0.01" value={state.bmSimple.affiliate.takeRate}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, affiliate:{...s.bmSimple.affiliate, takeRate: Number(e.target.value)||0}}}))}/>
+            </div>
+
+            {/* B2B */}
+            <div>
+              <Label>B2B 단가(건)</Label>
+              <Input type="number" value={state.bmSimple.b2b.pricePerDeal}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, b2b:{...s.bmSimple.b2b, pricePerDeal: Number(e.target.value)||0}}}))}/>
+            </div>
+            <div>
+              <Label>분기당 계약 건수</Label>
+              <Input type="number" value={state.bmSimple.b2b.dealsPerQuarter}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, b2b:{...s.bmSimple.b2b, dealsPerQuarter: Number(e.target.value)||0}}}))}/>
+            </div>
+            <div>
+              <Label>B2B 비용비율</Label>
+              <Input type="number" step="0.01" value={state.bmSimple.b2b.costRate}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, b2b:{...s.bmSimple.b2b, costRate: Number(e.target.value)||0}}}))}/>
+            </div>
+
+            {/* API */}
+            <div>
+              <Label>월 API 호출수</Label>
+              <Input type="number" value={state.bmSimple.api.callsPerMonth}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, api:{...s.bmSimple.api, callsPerMonth: Number(e.target.value)||0}}}))}/>
+            </div>
+            <div>
+              <Label>콜당 단가(USD)</Label>
+              <Input type="number" step="0.001" value={state.bmSimple.api.pricePerCallUSD}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, api:{...s.bmSimple.api, pricePerCallUSD: Number(e.target.value)||0}}}))}/>
+            </div>
+            <div>
+              <Label>환율(원/USD)</Label>
+              <Input type="number" value={state.bmSimple.api.fxKRWPerUSD}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, api:{...s.bmSimple.api, fxKRWPerUSD: Number(e.target.value)||0}}}))}/>
+            </div>
+            <div>
+              <Label>API 비용비율</Label>
+              <Input type="number" step="0.01" value={state.bmSimple.api.costRate}
+                onChange={(e)=>setState(s=>({...s, bmSimple:{...s.bmSimple, api:{...s.bmSimple.api, costRate: Number(e.target.value)||0}}}))}/>
+            </div>
+          </CardContent>
+        </Card>
+
 
         {/* (2) 활성 사용자 시나리오 */}
         <SectionTitle icon={<Database className="w-4 h-4"/>} title="② 활성 사용자 시나리오" subtitle="엑셀처럼 각 셀 직접 입력"/>
@@ -703,10 +911,17 @@ const deleteCase = async () => {
 
         {/* ② 차트보기 */}
         {tab==="chart" && (
-          <div className="pt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="pt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* 1행: 누적 손익 / 매출 구성(스택) */}
             <ChartCard title="누적 손익">
               <canvas ref={cumRef} className="w-full h-full" role="img" aria-label="누적 손익 라인 차트"/>
             </ChartCard>
+            <ChartCard title="매출 구성 (스택)">
+              {/* 신규 추가 캔버스 */}
+              <canvas ref={revStackRef} className="w-full h-full" role="img" aria-label="매출 구성 스택 바 차트"/>
+            </ChartCard>
+
+            {/* 2행: 월 매출·비용(라인) / 연도별 시나리오(바) */}
             <ChartCard title="월 매출 · 비용">
               <canvas ref={monthlyRef} className="w-full h-full" role="img" aria-label="월 매출·비용 라인 차트"/>
             </ChartCard>
@@ -1215,60 +1430,166 @@ function mergeRanges(ranges:number[][]){
 }
 
 function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:number=0.4){
-  // 1) 가중치 적용된 기간 목록
-  const basePeriods = [...state.periods].sort((a,b)=>a.start-b.start);
-  const periods = basePeriods.map(p=>adjustPeriodByWeight(p, mult, beta, gamma));
-
+  // 0) 준비: 기간(구간) 가중치 반영
+  const basePeriods = [...state.periods].sort((a:any,b:any)=>a.start-b.start);
+  const periods = basePeriods.map((p:any)=>adjustPeriodByWeight(p, mult, beta, gamma));
   const maxEnd = periods.reduce((m:number,p:any)=>Math.max(m,p.end),0);
+
+  // 1) 단가/원가(핵심 BM: 구독+인쇄)
+  const stdPrice   = state.pricing?.standard ?? 0;
+  const printPrice = state.print?.price ?? 0;
+  const outsCost   = (state.print?.outsUnit ?? 0) * (state.print?.outsRate ?? 1);
+  const leaseCost  = (state.print?.leaseUnit ?? 0) * (state.print?.leaseRate ?? 1);
+
+  // 2) 간단 BM(보조/확장) — state.bmSimple 없을 때를 대비한 안전 기본값
+  const bm = state.bmSimple ?? {
+    activation: { auxStartMonth: 13, b2bStartMonth: 25, apiStartMonth: 31 },
+    premium:   { price: 15000,  upsellRate: 0.10, costRate: 0.10 },
+    ads:       { cpm: 10000,    pvPerUser: 5, sponsorFee: 5_000_000, sponsorPerQuarter: 0, costRate: 0.15 },
+    affiliate: { aov: 30000,    conv: 0.01,  takeRate: 0.20, costRate: 0.00 },
+    b2b:       { pricePerDeal: 300000, dealsPerQuarter: 0, costRate: 0.30 },
+    api:       { callsPerMonth: 0, pricePerCallUSD: 0.01, fxKRWPerUSD: 1300, costRate: 0.40 },
+  };
+
   const months:any[] = [];
-
-  const stdPrice = state.pricing.standard;
-  const printPrice = state.print.price;
-  const outsCost = state.print.outsUnit * state.print.outsRate;
-  const leaseCost = state.print.leaseUnit * state.print.leaseRate;
-
-  let lastMAU = 0; // 직전 월 MAU
+  let lastMAU = 0;
+  let cum = 0;
 
   for(let m=1; m<=maxEnd; m++){
-    const pIdx = periods.findIndex((pp:any)=>m>=pp.start && m<=pp.end);
+    const pIdx = periods.findIndex((pp:any)=> m>=pp.start && m<=pp.end);
     if(pIdx<0){
-      months.push({month:m, rev:0, subRev:0, prtRev:0, varCost:0, fixed:0, net:0, mau:0, cum:0, ratios:{sub:0,prt:0}});
+      cum += 0;
+      months.push({
+        month:m, mau:0,
+        subRev:0, prtRev:0, rev:0,
+        varCost:0, fixed:0, net:0, cum,
+        // breakdown (간단 BM)
+        rev_premium:0, rev_ads:0, rev_affiliate:0, rev_b2b:0, rev_api:0,
+        ratios:{sub:0, prt:0}
+      });
       continue;
     }
+
     const p = periods[pIdx];
 
-    // 선형 증가: 이전 구간(가중치 적용 후) 목표 → 현재 목표까지 선형
-    const prevTarget = (pIdx>0)? periods[pIdx-1].mau : p.mau; // 첫 구간은 자기 목표
-    const periodLen = (p.end - p.start + 1);
-    const step = (p.mau - prevTarget) / periodLen;
-
-    const mau = (pIdx===0)? p.mau : Math.max(0, Math.round(lastMAU + step));
+    // (A) MAU: 같은 구간 내에서는 이전 목표→현재 목표로 선형 보간
+    const prevTarget = (pIdx>0) ? periods[pIdx-1].mau : p.mau;
+    const periodLen  = (p.end - p.start + 1);
+    const step       = (p.mau - prevTarget) / Math.max(1, periodLen);
+    const mau        = (pIdx===0) ? p.mau : Math.max(0, Math.round(lastMAU + step));
     lastMAU = mau;
 
-    const subUsers = mau * p.subCR;
-    const prtOrders = mau * p.prtCR; // 1인 1주문 가정
-    const subRev = subUsers * stdPrice;
-    const prtRev = prtOrders * printPrice;
+    // (B) 핵심 BM: 구독/인쇄
+    const subs      = mau * (p.subCR ?? 0);
+    const prtOrders = mau * (p.prtCR ?? 0);
+    const subRev    = subs * stdPrice;
+    const prtRev    = prtOrders * printPrice;
+    const coreRev   = subRev + prtRev;
 
-    const varCost = prtOrders * (p.hasLease? leaseCost : outsCost);
+    // 인쇄 변동원가(리스 vs 외주)
+    const unitVar   = p.hasLease ? leaseCost : outsCost;
+    const varCostPrt= prtOrders * unitVar;
 
-    // 고정비: 서버(가중치 반영됨) + 나머지 고정비
-    const wage = p.hasWage ? (p.avgWage * p.heads) : 0;
-    const office = p.hasOffice ? state.fixed.office : 0;
-    const leaseFix = p.hasLease ? state.fixed.leaseMonthly * p.leaseCnt : 0;
-    const fixed = p.server + wage + office + state.fixed.mkt + state.fixed.legal + leaseFix;
+    // 고정비: 서버(가중치 반영) + 인건비 + 사무실 + 리스(고정) + 마케팅 + 법무
+    const wage     = p.hasWage   ? (p.avgWage * p.heads) : 0;
+    const office   = p.hasOffice ? (state.fixed?.office ?? 0) : 0;
+    const leaseFix = p.hasLease  ? ((state.fixed?.leaseMonthly ?? 0) * (p.leaseCnt ?? 0)) : 0;
+    const mkt      = state.fixed?.mkt   ?? 0;
+    const legal    = state.fixed?.legal ?? 0;
+    const fixed    = (p.server ?? 0) + wage + office + leaseFix + mkt + legal;
 
-    const net = (subRev + prtRev - varCost) - fixed;
+    // (C) 간단 BM: 단계별 활성화 월 적용
+    const ax    = bm.activation;
+    const auxOn = m >= (ax?.auxStartMonth ?? 9999); // 프리미엄·광고·제휴
+    const b2bOn = m >= (ax?.b2bStartMonth ?? 9999);
+    const apiOn = m >= (ax?.apiStartMonth ?? 9999);
 
-    months.push({month:m, mau, subRev, prtRev, rev:subRev+prtRev, varCost, fixed, net, ratios:{sub:p.subCR, prt:p.prtCR}});
+    // 1) 프리미엄(업셀)
+    let revPremium=0, costPremium=0;
+    if(auxOn){
+      const upsellSubs = subs * (bm.premium?.upsellRate ?? 0);
+      revPremium = upsellSubs * (bm.premium?.price ?? 0);
+      costPremium = revPremium * (bm.premium?.costRate ?? 0);
+    }
+
+    // 2) 광고/스폰서십
+    let revAds=0, costAds=0;
+    if(auxOn){
+      const impressions = mau * (bm.ads?.pvPerUser ?? 0);
+      const revCPM = (impressions * (bm.ads?.cpm ?? 0)) / 1000;
+      const revSponsorMonthly = ((bm.ads?.sponsorFee ?? 0) * (bm.ads?.sponsorPerQuarter ?? 0)) / 3;
+      revAds = revCPM + revSponsorMonthly;
+      costAds = revAds * (bm.ads?.costRate ?? 0);
+    }
+
+    // 3) 제휴/커머스(수수료형)
+    let revAffiliate=0, costAffiliate=0;
+    if(auxOn){
+      const buyers = mau * (bm.affiliate?.conv ?? 0);
+      const gmv    = buyers * (bm.affiliate?.aov ?? 0);
+      revAffiliate = gmv * (bm.affiliate?.takeRate ?? 0); // 이미 '수익' 기준
+      costAffiliate= revAffiliate * (bm.affiliate?.costRate ?? 0);
+    }
+
+    // 4) B2B(분기 가정 → 월환산)
+    let revB2B=0, costB2B=0;
+    if(b2bOn){
+      const rMonthly = ((bm.b2b?.pricePerDeal ?? 0) * (bm.b2b?.dealsPerQuarter ?? 0)) / 3;
+      revB2B = rMonthly;
+      costB2B = revB2B * (bm.b2b?.costRate ?? 0);
+    }
+
+    // 5) API(콜×단가×환율)
+    let revAPI=0, costAPI=0;
+    if(apiOn){
+      const priceKRW = (bm.api?.pricePerCallUSD ?? 0) * (bm.api?.fxKRWPerUSD ?? 0);
+      revAPI = (bm.api?.callsPerMonth ?? 0) * priceKRW;
+      costAPI = revAPI * (bm.api?.costRate ?? 0);
+    }
+
+    // (D) 합산
+    const revAux  = revPremium + revAds + revAffiliate;
+    const costAux = costPremium + costAds + costAffiliate;
+    const revExt  = revB2B + revAPI;
+    const costExt = costB2B + costAPI;
+
+    const totalRev   = coreRev + revAux + revExt;
+    const totalVar   = varCostPrt + costAux + costExt;
+    const net        = totalRev - totalVar - fixed;
+    cum += net;
+
+    // (E) 행 적재 (+ IR용 breakdown 필드)
+    months.push({
+      month: m,
+      mau,
+      subRev, prtRev,
+      rev: totalRev,
+      varCost: totalVar,
+      fixed,
+      net,
+      cum,
+      rev_premium:   revPremium,
+      rev_ads:       revAds,
+      rev_affiliate: revAffiliate,
+      rev_b2b:       revB2B,
+      rev_api:       revAPI,
+      ratios: {
+        sub: totalRev ? (subRev/totalRev) : 0,
+        prt: totalRev ? (prtRev/totalRev) : 0,
+      }
+    });
   }
 
-  // 누적/최저/흑자전환
-  let cum=0, minCum=0, minCumMonth=0, bepMonth:number|undefined=undefined;
-  months.forEach(r=>{ cum+=r.net; r.cum=cum; if(cum<minCum){ minCum=cum; minCumMonth=r.month; } if(bepMonth===undefined && r.cum>=0) bepMonth=r.month; });
+  // 3) 리포트 지표: 최소 누적, BEP(누적 0 돌파)
+  let minCum = 0, minCumMonth = 0, bepMonth: number|undefined = undefined;
+  for(const r of months){
+    if(r.cum < minCum){ minCum = r.cum; minCumMonth = r.month; }
+    if(bepMonth===undefined && r.cum>=0){ bepMonth = r.month; }
+  }
 
-  return {months, minCum, minCumMonth, bepMonth};
+  return { months, minCum, minCumMonth, bepMonth };
 }
+
 
 function calcScenarioYears(state:any){
   // 중립(원본) 월 시뮬
