@@ -83,11 +83,53 @@ function adjustStateForScenario(base:any, mult:number, beta:number, gamma:number
   return { ...base, periods: base.periods.map((p:any)=>adjustPeriodByWeight(p, mult, beta, gamma)) };
 }
 
+
+// 1) 서버비 구간(계단형) — 필요하면 자유롭게 조정
+const SERVER_COST_TABLE: Array<{maxMau:number; cost:number}> = [
+  { maxMau: 499,    cost: 300_000 },
+  { maxMau: 599,    cost: 350_000 },
+  { maxMau: 799,    cost: 400_000 },
+  { maxMau: 1499,   cost: 500_000 },
+  { maxMau: 4999,   cost: 1_200_000 },
+  { maxMau: 9999,   cost: 2_000_000 },
+  { maxMau: 19999,  cost: 2_800_000 },
+  { maxMau: 39999,  cost: 5_000_000 },
+  { maxMau: Infinity, cost: 8_000_000 },
+];
+
+// MAU → 서버비(원)
+function serverCostByMAU(mau:number){
+  return SERVER_COST_TABLE.find(t=>mau<=t.maxMau)!.cost;
+}
+
+// MAU → 스토리지비(원) (사진수·평균용량·단가 기반)
+// photosPerUser: 1인당 월 업로드 사진 수
+// avgPhotoMB: 사진 1장 평균 용량(MB)
+// pricePerGB: 스토리지 단가(원/GB)
+function storageCostByMAU(
+  mau:number,
+  photosPerUser:number,
+  avgPhotoMB:number,
+  pricePerGB:number
+){
+  const gbPerUser = (photosPerUser * avgPhotoMB) / 1024; // MB→GB
+  const storageGB = mau * gbPerUser;
+  return Math.round(storageGB * pricePerGB);
+}
+
+// 통합 추정자: 서버비 + 스토리지비
+function estimateInfraCost(mau:number, infra:{photosPerUser:number; avgPhotoMB:number; storagePricePerGB:number}){
+  const serverCost = serverCostByMAU(mau);
+  const storageCost = storageCostByMAU(mau, infra.photosPerUser, infra.avgPhotoMB, infra.storagePricePerGB);
+  return { serverCost, storageCost, total: serverCost + storageCost };
+}
+
+
 /*************************
- * BM Simple 기본값 & 머지 유틸
+ * 기본값 & 머지 유틸 (bmSimple + infra)
  *************************/
 
-// 1) BM Simple의 "기본값" (여기를 IR 가정에 맞게 조정 가능)
+// 1) BM Simple의 "기본값"
 const defaultBmSimple = {
   activation: { auxStartMonth: 13, b2bStartMonth: 25, apiStartMonth: 31 },
   premium:   { price: 14900,  upsellRate: 0.10, costRate: 0.10 },
@@ -97,23 +139,36 @@ const defaultBmSimple = {
   api:       { callsPerMonth: 5_000_000, pricePerCallUSD: 0.01, fxKRWPerUSD: 1300, costRate: 0.40 },
 } as const;
 
-// 2) 아무 저장본(payload)에든 기본값을 "깊게" 주입하는 함수
-function withBmDefaults<T extends { bmSimple?: any }>(s: T): T {
-  const src = s?.bmSimple || {};
+// 2) 인프라(자동 서버/스토리지) 기본값
+const defaultInfra = {
+  photosPerUser: 1000,   // 1인당 월 업로드 사진수
+  avgPhotoMB: 4,         // 사진 1장 평균 용량(MB)  => 약 3.91GB/인·월
+  storagePricePerGB: 30, // 스토리지 단가(원/GB)   => S3 Standard ≈ 30원/GB
+} as const;
+
+// 3) 어떤 저장본(payload)이 오더라도 기본값을 "깊게" 주입
+function withDefaults<T extends { bmSimple?: any; infra?: any }>(s: T): T {
+  const bm = s?.bmSimple || {};
+  const ifr = s?.infra || {};
   return {
     ...s,
     bmSimple: {
       ...defaultBmSimple,
-      ...src,
-      activation: { ...defaultBmSimple.activation, ...(src.activation||{}) },
-      premium:    { ...defaultBmSimple.premium,    ...(src.premium||{}) },
-      ads:        { ...defaultBmSimple.ads,        ...(src.ads||{}) },
-      affiliate:  { ...defaultBmSimple.affiliate,  ...(src.affiliate||{}) },
-      b2b:        { ...defaultBmSimple.b2b,        ...(src.b2b||{}) },
-      api:        { ...defaultBmSimple.api,        ...(src.api||{}) },
+      ...bm,
+      activation: { ...defaultBmSimple.activation, ...(bm.activation||{}) },
+      premium:    { ...defaultBmSimple.premium,    ...(bm.premium||{}) },
+      ads:        { ...defaultBmSimple.ads,        ...(bm.ads||{}) },
+      affiliate:  { ...defaultBmSimple.affiliate,  ...(bm.affiliate||{}) },
+      b2b:        { ...defaultBmSimple.b2b,        ...(bm.b2b||{}) },
+      api:        { ...defaultBmSimple.api,        ...(bm.api||{}) },
+    },
+    infra: {
+      ...defaultInfra,
+      ...ifr,
     }
   } as T;
 }
+
 
 /*************************
  * 초기 상태
@@ -139,7 +194,14 @@ const defaultState = {
     legal:    500_000,                           // 법률/회계 비용(월)
     leaseMonthly: 3_000_000                      // 리스 월 금액(장비 1대)
   },
-
+  
+  // 인프라(자동 서버/스토리지 비용) 기본값 — (1)월 평균 사진 수, (2)사진 평균 용량(MB), (3)스토리지 단가(원/GB)
+  infra: {
+    photosPerUser: 1000,   // 1인당 월 업로드 사진수
+    avgPhotoMB: 4,         // 사진 1장 평균 용량(MB)
+    storagePricePerGB: 30, // 스토리지 단가(원/GB), S3 Standard 환산
+  },
+  
   // 시나리오 가중치
   weights: { con: 0.7, neu: 1.0, agg: 1.2 },
 
@@ -186,10 +248,10 @@ const fetchCaseList = async () => {
     .order('updated_at', { ascending: false });
 
   if (!error && data) {
-    setCaseList(data.map(r => ({ name: r.name, ...withBmDefaults(r.payload) })));
+    setCaseList(data.map(r => ({ name: r.name, ...withDefaults(r.payload) })));
     const cur = data.find(d => d.name === state.name);
     if (cur?.payload) {
-      setState(withBmDefaults(cur.payload));
+      setState(withDefaults(cur.payload)); // ✅ 현재 케이스에도 기본값 주입
       versionRef.current = cur.version ?? 0;
     }
   }
@@ -385,7 +447,7 @@ const loadCase = async (name: string) => {
     alert('해당 Case를 찾을 수 없습니다');
     return;
   }
-  setState(withBmDefaults(data.payload));
+  setState(withDefaults(data.payload));
   versionRef.current = data.version ?? 0;
 };
 
@@ -517,6 +579,32 @@ const deleteCase = async () => {
             </CardContent>
           </HoverCard>
 
+          {/* 인프라 가정 설정 */}
+          <HoverCard>
+            <CardHeader><CardTitle className="text-sm text-slate-600">인프라 가정 (자동 서버/스토리지 비용)</CardTitle></CardHeader>
+            <CardContent className="grid grid-cols-3 gap-3">
+              <NumberInput
+                label="1인당 월 사진 수"
+                value={(state.infra?.photosPerUser ?? defaultInfra.photosPerUser)}
+                onChange={(v)=>setState(s=>withDefaults({...s, infra:{...(s.infra||{}), photosPerUser: Math.max(0, Math.round(v||0))}}))}
+              />
+              <NumberInput
+                label="평균 용량(MB/장)"
+                value={(state.infra?.avgPhotoMB ?? defaultInfra.avgPhotoMB)}
+                onChange={(v)=>setState(s=>withDefaults({...s, infra:{...(s.infra||{}), avgPhotoMB: Math.max(0, v||0)}}))}
+              />
+              <MoneyInput
+                label="스토리지 단가(원/GB)"
+                value={(state.infra?.storagePricePerGB ?? defaultInfra.storagePricePerGB)}
+                onChange={(v)=>setState(s=>withDefaults({...s, infra:{...(s.infra||{}), storagePricePerGB: Math.max(0, v||0)}}))}
+              />
+              <div className="col-span-3 text-xs text-slate-500">
+                서버비는 MAU 구간별 계단형, 스토리지는 사진수×평균MB로 선형 계산됩니다.
+              </div>
+            </CardContent>
+          </HoverCard>
+
+          {/* 시나리오 가중치 설정 */}
           <HoverCard>
             <CardHeader><CardTitle className="text-sm text-slate-600">시나리오 가중치</CardTitle></CardHeader>
             <CardContent className="grid grid-cols-3 gap-3">
@@ -563,7 +651,7 @@ const deleteCase = async () => {
           </HoverCard>
         </div>
 
-        {/* === [NEW] BM 활성화 & 파라미터 (간단) === */}
+        {/* === BM 활성화 & 파라미터 (간단) === */}
         <Card>
           <CardHeader>
             <CardTitle>BM 활성화(개월차) & 간단 파라미터</CardTitle>
@@ -695,26 +783,31 @@ const deleteCase = async () => {
           <CardContent className="p-0">
             <div className="overflow-auto">
               <table className="w-full text-sm">
+
               <thead className="bg-slate-100 text-slate-700">
                 <tr className="[&>th]:px-3 [&>th]:py-2 border-b border-slate-200">
-                  <th className="w-[85px] min-w-[72px]">기간<br></br>(개월)</th>
+                  <th className="w-[85px] min-w-[72px]">기간<br/>(개월)</th>
                   <th className="min-w-[80px]">MAU</th>
                   <th className="min-w-[80px]">구독 전환율</th>
                   <th className="min-w-[80px]">인쇄 전환율</th>
-                  <th className="min-w-[40px]">서버 비용(월)</th>
+                  <th className="min-w-[110px]">서버(자동)</th>
+                  <th className="min-w-[110px]">스토리지(자동)</th>
                   <th>인건비포함?</th>
                   <th className="min-w-[40px]">평균 인건비</th>
                   <th className="min-w-[40px]">인원수</th>
                   <th>사무실 포함?</th>
                   <th>리스?</th>
-                  <th className="min-w-[80px]">리스 개수<br></br>(시간·대 당)</th>
+                  <th className="min-w-[80px]">리스 개수<br/>(시간·대 당)</th>
                   <th>삭제</th>
                 </tr>
               </thead>
+
                 <tbody className="divide-y divide-slate-100">
                   {state.periods.sort((a,b)=>a.start-b.start).map((p,idx)=> (
                     <tr key={p.id} className="hover:bg-slate-50 transition-colors">
                       {/* 인라인 입력: value는 포맷 없이 순수값만 */}
+
+                      {/* 기간 */}
                       <td className="px-3 py-2">
                         <input aria-label="기간" className="w-full bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8"
                           value={`${p.start}-${p.end}`}
@@ -723,11 +816,13 @@ const deleteCase = async () => {
                             setState(st=>{ const arr=[...st.periods]; arr[idx] = {...arr[idx], start:Number.isFinite(s)?Math.max(1,s!):p.start, end:Number.isFinite(e2)?Math.max(arr[idx].start,e2!):p.end}; return {...st, periods:arr}; })
                           }}/>
                       </td>
+
+                      {/* MAU */}
                       <td className="px-3 py-2"><input type="number" className="w-full bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
                           value={p.mau}
                           onChange={(e)=>updatePeriod(idx,{mau:parseInt(e.target.value||'0')||0},setState)}/></td>
 
-                      {/* 전환율 입력 + % (명) 표시 */}
+                      {/* 구독 전환율 */}
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-0 justify-end">
                           <input type="number" step="0.1" className="w-15 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
@@ -736,6 +831,8 @@ const deleteCase = async () => {
                           <span className="text-xs text-slate-500 whitespace-nowrap">{`${KRW.pctFmt(p.subCR)} (${Math.round(p.mau*p.subCR).toLocaleString()}명)`}</span>
                         </div>
                       </td>
+
+                      {/* 인쇄 전환율 */}
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-0 justify-end">
                           <input type="number" step="0.1" className="w-15 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
@@ -745,29 +842,46 @@ const deleteCase = async () => {
                         </div>
                       </td>
 
-                      <td className="px-3 py-2">
-                        <input type="number"
-                        className="w-25 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
-                        value={p.server}
-                        onChange={(e)=>updatePeriod(idx,{server:parseInt(e.target.value||'0')||0},setState)}/>
-                      </td>
-                      
+                      {/* 서버비용 */}
+                      {(() => {
+                        const safeState = withDefaults(state); // ✅ 표 렌더링 시에도 보수적 머지
+                        const est = estimateInfraCost(p.mau, safeState.infra);
+                        return (
+                          <>
+                            <td className="px-3 py-2 text-right align-middle">
+                              <span className="text-slate-700">{KRW.fmt(est.serverCost)}</span>
+                            </td>
+                            <td className="px-3 py-2 text-right align-middle">
+                              <span className="text-slate-700">{KRW.fmt(est.storageCost)}</span>
+                            </td>
+                          </>
+                        );
+                      })()}
+
+                      {/* 인건비 포함 */}
                       <td className="px-3 py-2"><Switch checked={p.hasWage} onCheckedChange={(v)=>updatePeriod(idx,{hasWage:v},setState)} aria-label="인건비 포함"/></td>
                       
+                      {/* 평균 인건비 */}
                       <td className="px-3 py-2">
                         <input type="number"
                         className="w-25 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
                         value={p.avgWage}
                         onChange={(e)=>updatePeriod(idx,{avgWage:parseInt(e.target.value||'0')||0},setState)}/>
                       </td>
+
+                      {/* 인원수 */}
                       <td className="px-3 py-2">
                         <input type="number"
                         className="w-10 bg-transparent border border-transparent focus:border-indigo-300 focus:bg-indigo-50/40 rounded px-2 py-1 h-8 text-right"
                         value={p.heads}
                         onChange={(e)=>updatePeriod(idx,{heads:parseInt(e.target.value||'0')||0},setState)}/>
                       </td>
+
+                      {/* 사무실 포함? */}
                       <td className="px-3 py-2"><Switch checked={p.hasOffice} onCheckedChange={(v)=>updatePeriod(idx,{hasOffice:v},setState)} aria-label="사무실 포함"/></td>
+                      {/* 리스? */}
                       <td className="px-3 py-2"><Switch checked={p.hasLease} onCheckedChange={(v)=>updatePeriod(idx,{hasLease:v},setState)} aria-label="리스"/></td>                      
+                      {/* 리스 개수 */}
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-0 justify-end">
                           <input
@@ -785,6 +899,7 @@ const deleteCase = async () => {
                           })()}
                         </div>
                       </td>
+                      {/* 행 삭제 */}
                       <td className="px-3 py-2">
                         <Button size="icon" variant="destructive" onClick={()=>setState(s=>({...s,periods:s.periods.filter(x=>x.id!==p.id)}))} aria-label="행 삭제">
                           <Trash2 className="w-4 h-4"/>
@@ -1430,18 +1545,15 @@ function mergeRanges(ranges:number[][]){
 }
 
 function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:number=0.4){
-  // 0) 준비: 기간(구간) 가중치 반영
   const basePeriods = [...state.periods].sort((a:any,b:any)=>a.start-b.start);
   const periods = basePeriods.map((p:any)=>adjustPeriodByWeight(p, mult, beta, gamma));
   const maxEnd = periods.reduce((m:number,p:any)=>Math.max(m,p.end),0);
 
-  // 1) 단가/원가(핵심 BM: 구독+인쇄)
   const stdPrice   = state.pricing?.standard ?? 0;
   const printPrice = state.print?.price ?? 0;
   const outsCost   = (state.print?.outsUnit ?? 0) * (state.print?.outsRate ?? 1);
   const leaseCost  = (state.print?.leaseUnit ?? 0) * (state.print?.leaseRate ?? 1);
 
-  // 2) 간단 BM(보조/확장) — state.bmSimple 없을 때를 대비한 안전 기본값
   const bm = state.bmSimple ?? {
     activation: { auxStartMonth: 13, b2bStartMonth: 25, apiStartMonth: 31 },
     premium:   { price: 15000,  upsellRate: 0.10, costRate: 0.10 },
@@ -1458,53 +1570,55 @@ function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:nu
   for(let m=1; m<=maxEnd; m++){
     const pIdx = periods.findIndex((pp:any)=> m>=pp.start && m<=pp.end);
     if(pIdx<0){
-      cum += 0;
-      months.push({
-        month:m, mau:0,
-        subRev:0, prtRev:0, rev:0,
-        varCost:0, fixed:0, net:0, cum,
-        // breakdown (간단 BM)
+      months.push({ month:m, mau:0, subRev:0, prtRev:0, rev:0, varCost:0, fixed:0, net:0, cum, 
         rev_premium:0, rev_ads:0, rev_affiliate:0, rev_b2b:0, rev_api:0,
-        ratios:{sub:0, prt:0}
-      });
+        serverAuto:0, storageCost:0, ratios:{sub:0, prt:0} });
       continue;
     }
-
     const p = periods[pIdx];
 
-    // (A) MAU: 같은 구간 내에서는 이전 목표→현재 목표로 선형 보간
+    // MAU 선형 보간
     const prevTarget = (pIdx>0) ? periods[pIdx-1].mau : p.mau;
     const periodLen  = (p.end - p.start + 1);
     const step       = (p.mau - prevTarget) / Math.max(1, periodLen);
     const mau        = (pIdx===0) ? p.mau : Math.max(0, Math.round(lastMAU + step));
     lastMAU = mau;
 
-    // (B) 핵심 BM: 구독/인쇄
+    // 구독/인쇄
     const subs      = mau * (p.subCR ?? 0);
     const prtOrders = mau * (p.prtCR ?? 0);
     const subRev    = subs * stdPrice;
     const prtRev    = prtOrders * printPrice;
     const coreRev   = subRev + prtRev;
 
-    // 인쇄 변동원가(리스 vs 외주)
+    // 인쇄 변동원가
     const unitVar   = p.hasLease ? leaseCost : outsCost;
     const varCostPrt= prtOrders * unitVar;
 
-    // 고정비: 서버(가중치 반영) + 인건비 + 사무실 + 리스(고정) + 마케팅 + 법무
+    // 자동 인프라 비용 계산 (서버 + 스토리지)
+    const infraInput = (state.infra ?? defaultInfra);
+    const infraEst = estimateInfraCost(mau, {
+      photosPerUser: infraInput.photosPerUser,
+      avgPhotoMB: infraInput.avgPhotoMB,
+      storagePricePerGB: infraInput.storagePricePerGB,
+    });
+    const serverAuto   = infraEst.serverCost;
+    const storageCost  = infraEst.storageCost;
+
+    // 고정비(서버·스토리지 자동반영 + 인건비/사무실/리스/마케팅/법무)
     const wage     = p.hasWage   ? (p.avgWage * p.heads) : 0;
     const office   = p.hasOffice ? (state.fixed?.office ?? 0) : 0;
     const leaseFix = p.hasLease  ? ((state.fixed?.leaseMonthly ?? 0) * (p.leaseCnt ?? 0)) : 0;
     const mkt      = state.fixed?.mkt   ?? 0;
     const legal    = state.fixed?.legal ?? 0;
-    const fixed    = (p.server ?? 0) + wage + office + leaseFix + mkt + legal;
+    const fixed    = serverAuto + storageCost + wage + office + leaseFix + mkt + legal;
 
-    // (C) 간단 BM: 단계별 활성화 월 적용
+    // 간단 BM
     const ax    = bm.activation;
-    const auxOn = m >= (ax?.auxStartMonth ?? 9999); // 프리미엄·광고·제휴
+    const auxOn = m >= (ax?.auxStartMonth ?? 9999);
     const b2bOn = m >= (ax?.b2bStartMonth ?? 9999);
     const apiOn = m >= (ax?.apiStartMonth ?? 9999);
 
-    // 1) 프리미엄(업셀)
     let revPremium=0, costPremium=0;
     if(auxOn){
       const upsellSubs = subs * (bm.premium?.upsellRate ?? 0);
@@ -1512,7 +1626,6 @@ function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:nu
       costPremium = revPremium * (bm.premium?.costRate ?? 0);
     }
 
-    // 2) 광고/스폰서십
     let revAds=0, costAds=0;
     if(auxOn){
       const impressions = mau * (bm.ads?.pvPerUser ?? 0);
@@ -1522,16 +1635,14 @@ function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:nu
       costAds = revAds * (bm.ads?.costRate ?? 0);
     }
 
-    // 3) 제휴/커머스(수수료형)
     let revAffiliate=0, costAffiliate=0;
     if(auxOn){
       const buyers = mau * (bm.affiliate?.conv ?? 0);
       const gmv    = buyers * (bm.affiliate?.aov ?? 0);
-      revAffiliate = gmv * (bm.affiliate?.takeRate ?? 0); // 이미 '수익' 기준
+      revAffiliate = gmv * (bm.affiliate?.takeRate ?? 0);
       costAffiliate= revAffiliate * (bm.affiliate?.costRate ?? 0);
     }
 
-    // 4) B2B(분기 가정 → 월환산)
     let revB2B=0, costB2B=0;
     if(b2bOn){
       const rMonthly = ((bm.b2b?.pricePerDeal ?? 0) * (bm.b2b?.dealsPerQuarter ?? 0)) / 3;
@@ -1539,7 +1650,6 @@ function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:nu
       costB2B = revB2B * (bm.b2b?.costRate ?? 0);
     }
 
-    // 5) API(콜×단가×환율)
     let revAPI=0, costAPI=0;
     if(apiOn){
       const priceKRW = (bm.api?.pricePerCallUSD ?? 0) * (bm.api?.fxKRWPerUSD ?? 0);
@@ -1547,7 +1657,6 @@ function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:nu
       costAPI = revAPI * (bm.api?.costRate ?? 0);
     }
 
-    // (D) 합산
     const revAux  = revPremium + revAds + revAffiliate;
     const costAux = costPremium + costAds + costAffiliate;
     const revExt  = revB2B + revAPI;
@@ -1558,21 +1667,18 @@ function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:nu
     const net        = totalRev - totalVar - fixed;
     cum += net;
 
-    // (E) 행 적재 (+ IR용 breakdown 필드)
     months.push({
-      month: m,
-      mau,
+      month: m, mau,
       subRev, prtRev,
-      rev: totalRev,
-      varCost: totalVar,
-      fixed,
-      net,
-      cum,
+      rev: totalRev, varCost: totalVar, fixed, net, cum,
+      // breakdowns
       rev_premium:   revPremium,
       rev_ads:       revAds,
       rev_affiliate: revAffiliate,
       rev_b2b:       revB2B,
       rev_api:       revAPI,
+      // 인프라 브레이크다운(표/차트에서 활용 가능)
+      serverAuto, storageCost,
       ratios: {
         sub: totalRev ? (subRev/totalRev) : 0,
         prt: totalRev ? (prtRev/totalRev) : 0,
@@ -1580,15 +1686,15 @@ function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:nu
     });
   }
 
-  // 3) 리포트 지표: 최소 누적, BEP(누적 0 돌파)
+  // 요약 지표
   let minCum = 0, minCumMonth = 0, bepMonth: number|undefined = undefined;
   for(const r of months){
     if(r.cum < minCum){ minCum = r.cum; minCumMonth = r.month; }
     if(bepMonth===undefined && r.cum>=0){ bepMonth = r.month; }
   }
-
   return { months, minCum, minCumMonth, bepMonth };
 }
+
 
 
 function calcScenarioYears(state:any){
