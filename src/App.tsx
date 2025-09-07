@@ -117,12 +117,37 @@ function storageCostByMAU(
   return Math.round(storageGB * pricePerGB);
 }
 
-// 통합 추정자: 서버비 + 스토리지비
-function estimateInfraCost(mau:number, infra:{photosPerUser:number; avgPhotoMB:number; storagePricePerGB:number}){
-  const serverCost = serverCostByMAU(mau);
-  const storageCost = storageCostByMAU(mau, infra.photosPerUser, infra.avgPhotoMB, infra.storagePricePerGB);
-  return { serverCost, storageCost, total: serverCost + storageCost };
+// 통합 추정자: 서버비 + 스토리지비 + AI비용
+function estimateAICost(
+  mau: number,
+  photosPerUser: number,
+  ai: { aiCvPerImage: number; aiCaptionPerImage: number; aiCaptionRate: number }
+){
+  const aiPerImage = (ai.aiCvPerImage ?? 0) + (ai.aiCaptionRate ?? 0) * (ai.aiCaptionPerImage ?? 0);
+  return Math.max(0, Math.round(mau * photosPerUser * aiPerImage));
 }
+
+function estimateInfraCost(
+  mau:number,
+  infra:{
+    photosPerUser:number;
+    avgPhotoMB:number;
+    storagePricePerGB:number;
+    aiCvPerImage?:number;
+    aiCaptionPerImage?:number;
+    aiCaptionRate?:number;
+  }
+){
+  const serverCost  = serverCostByMAU(mau);
+  const storageCost = storageCostByMAU(mau, infra.photosPerUser, infra.avgPhotoMB, infra.storagePricePerGB);
+  const aiCost      = estimateAICost(mau, infra.photosPerUser, {
+    aiCvPerImage: infra.aiCvPerImage ?? 0,
+    aiCaptionPerImage: infra.aiCaptionPerImage ?? 0,
+    aiCaptionRate: infra.aiCaptionRate ?? 0,
+  });
+  return { serverCost, storageCost, aiCost, total: serverCost + storageCost + aiCost };
+}
+
 
 
 /*************************
@@ -141,10 +166,17 @@ const defaultBmSimple = {
 
 // 2) 인프라(자동 서버/스토리지) 기본값
 const defaultInfra = {
+  // 스토리지 계산 입력
   photosPerUser: 1000,   // 1인당 월 업로드 사진수
   avgPhotoMB: 4,         // 사진 1장 평균 용량(MB)  => 약 3.91GB/인·월
   storagePricePerGB: 30, // 스토리지 단가(원/GB)   => S3 Standard ≈ 30원/GB
+
+  // 🔥 AI 계산 입력 (2번 파일 'AI 비용 계산.md' 기본값)
+  aiCvPerImage: 3,       // 품질/중복 제거 단가(원/장)
+  aiCaptionPerImage: 7,  // 캡션 생성 단가(원/장)
+  aiCaptionRate: 1.0     // 캡션 적용률(0~1)
 } as const;
+
 
 // 3) 어떤 저장본(payload)이 오더라도 기본값을 "깊게" 주입
 function withDefaults<T extends { bmSimple?: any; infra?: any }>(s: T): T {
@@ -581,25 +613,49 @@ const deleteCase = async () => {
 
           {/* 인프라 가정 설정 */}
           <HoverCard>
-            <CardHeader><CardTitle className="text-sm text-slate-600">인프라 가정 (자동 서버/스토리지 비용)</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="text-sm text-slate-600">인프라 가정 (서버·스토리지·AI 자동 계산)</CardTitle>
+            </CardHeader>
             <CardContent className="grid grid-cols-3 gap-3">
+              {/* 스토리지 입력 */}
               <NumberInput
                 label="1인당 월 사진 수"
                 value={(state.infra?.photosPerUser ?? defaultInfra.photosPerUser)}
-                onChange={(v)=>setState(s=>withDefaults({...s, infra:{...(s.infra||{}), photosPerUser: Math.max(0, Math.round(v||0))}}))}
+                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), photosPerUser: Math.max(0, Math.round(v||0))}}))}
               />
               <NumberInput
                 label="평균 용량(MB/장)"
                 value={(state.infra?.avgPhotoMB ?? defaultInfra.avgPhotoMB)}
-                onChange={(v)=>setState(s=>withDefaults({...s, infra:{...(s.infra||{}), avgPhotoMB: Math.max(0, v||0)}}))}
+                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), avgPhotoMB: Math.max(0, v||0)}}))}
               />
               <MoneyInput
                 label="스토리지 단가(원/GB)"
                 value={(state.infra?.storagePricePerGB ?? defaultInfra.storagePricePerGB)}
-                onChange={(v)=>setState(s=>withDefaults({...s, infra:{...(s.infra||{}), storagePricePerGB: Math.max(0, v||0)}}))}
+                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), storagePricePerGB: Math.max(0, v||0)}}))}
               />
+
+              {/* AI 입력 */}
+              <MoneyInput
+                label="AI: 품질/중복 제거(원/장)"
+                value={(state.infra?.aiCvPerImage ?? defaultInfra.aiCvPerImage)}
+                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), aiCvPerImage: Math.max(0, v||0)}}))}
+              />
+              <MoneyInput
+                label="AI: 캡션(원/장)"
+                value={(state.infra?.aiCaptionPerImage ?? defaultInfra.aiCaptionPerImage)}
+                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), aiCaptionPerImage: Math.max(0, v||0)}}))}
+              />
+              <NumberInput
+                label="AI: 캡션 적용률(0~1)"
+                step={0.05}
+                min={0}
+                max={1}
+                value={(state.infra?.aiCaptionRate ?? defaultInfra.aiCaptionRate)}
+                onChange={(v)=>setState(s=>({...s, infra:{...(s.infra||{}), aiCaptionRate: Math.max(0, Math.min(1, Number(v)||0))}}))}
+              />
+
               <div className="col-span-3 text-xs text-slate-500">
-                서버비는 MAU 구간별 계단형, 스토리지는 사진수×평균MB로 선형 계산됩니다.
+                스토리지는 선형(GB×단가), 서버는 MAU 구간별 계단식, AI는 <code>MAU × 1인당 월 사진수 × (cv + 캡션율×캡션)</code>로 계산됩니다.
               </div>
             </CardContent>
           </HoverCard>
@@ -1595,23 +1651,28 @@ function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:nu
     const unitVar   = p.hasLease ? leaseCost : outsCost;
     const varCostPrt= prtOrders * unitVar;
 
-    // 자동 인프라 비용 계산 (서버 + 스토리지)
+    // 🔥 자동 인프라 비용 계산 (서버 + 스토리지 + AI)
     const infraInput = (state.infra ?? defaultInfra);
     const infraEst = estimateInfraCost(mau, {
       photosPerUser: infraInput.photosPerUser,
       avgPhotoMB: infraInput.avgPhotoMB,
       storagePricePerGB: infraInput.storagePricePerGB,
+      aiCvPerImage: infraInput.aiCvPerImage,
+      aiCaptionPerImage: infraInput.aiCaptionPerImage,
+      aiCaptionRate: infraInput.aiCaptionRate,
     });
     const serverAuto   = infraEst.serverCost;
     const storageCost  = infraEst.storageCost;
+    const aiCost       = infraEst.aiCost;
 
-    // 고정비(서버·스토리지 자동반영 + 인건비/사무실/리스/마케팅/법무)
+    // 고정비(서버·스토리지·AI 자동반영 + 인건비/사무실/리스/마케팅/법무)
     const wage     = p.hasWage   ? (p.avgWage * p.heads) : 0;
     const office   = p.hasOffice ? (state.fixed?.office ?? 0) : 0;
     const leaseFix = p.hasLease  ? ((state.fixed?.leaseMonthly ?? 0) * (p.leaseCnt ?? 0)) : 0;
     const mkt      = state.fixed?.mkt   ?? 0;
     const legal    = state.fixed?.legal ?? 0;
-    const fixed    = serverAuto + storageCost + wage + office + leaseFix + mkt + legal;
+    const fixed    = serverAuto + storageCost + aiCost + wage + office + leaseFix + mkt + legal;
+
 
     // 간단 BM
     const ax    = bm.activation;
