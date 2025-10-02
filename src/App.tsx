@@ -227,12 +227,27 @@ const defaultInfra = {
   aiCaptionRate: 1.0,
 } as const;
 
+const defaultCustomer = {
+  funnelRate: 1.0,
+  proShare: 0.0,
+  retentionRate: 0.85,
+  freeRatio: 0.0,
+  arpuAdjust: 1.0,
+}
+
+const defaultPricing = {
+  standard: 7_900,
+  pro: 0,
+}
+
 
 
 // 3) 어떤 저장본(payload)이 오더라도 기본값을 "깊게" 주입
-function withDefaults<T extends { bmSimple?: any; infra?: any }>(s: T): T {
+function withDefaults<T extends { bmSimple?: any; infra?: any; pricing?: any; customer?: any }>(s: T): T {
   const bm = s?.bmSimple || {};
   const ifr = s?.infra || {};
+  const pricing = (s as any)?.pricing || {};
+  const customer = (s as any)?.customer || {};
   return {
     ...s,
 
@@ -245,16 +260,32 @@ function withDefaults<T extends { bmSimple?: any; infra?: any }>(s: T): T {
       affiliate:  { ...defaultBmSimple.affiliate,  ...(bm.affiliate||{}) },
       b2b:        { ...defaultBmSimple.b2b,        ...(bm.b2b||{}) },
       api:        { ...defaultBmSimple.api,        ...(bm.api||{}) },
-      // ✅ 추가
+      // 추가
       enabled:    { ...defaultBmSimple.enabled,    ...(bm.enabled||{}) },
     },
 
     infra: {
       ...defaultInfra,
       ...ifr,
-    }
+    },
+
+    pricing: {
+      ...defaultPricing,
+      ...pricing,
+    },
+
+    customer: {
+      ...defaultCustomer,
+      ...customer,
+      funnelRate: typeof customer.funnelRate === 'number' ? customer.funnelRate : defaultCustomer.funnelRate,
+      proShare: typeof customer.proShare === 'number' ? customer.proShare : defaultCustomer.proShare,
+      retentionRate: typeof customer.retentionRate === 'number' ? customer.retentionRate : defaultCustomer.retentionRate,
+      freeRatio: typeof customer.freeRatio === 'number' ? customer.freeRatio : defaultCustomer.freeRatio,
+      arpuAdjust: typeof customer.arpuAdjust === 'number' ? customer.arpuAdjust : defaultCustomer.arpuAdjust,
+    },
   } as T;
 }
+
 
 
 /*************************
@@ -267,12 +298,14 @@ const defaultState = {
   sensitivity: { beta: 0.6, gamma: 0.4 }, // ← 콤마 필수!
 
   // 요금/단가
-  pricing: { standard: 7_900, pro: 0 }, // pro 안 쓰면 0 유지
+  pricing: { ...defaultPricing },
   print: {
     price: 40_000, // 인쇄 객단가
     outsUnit: 15_000, outsRate: 1, // 외주 원가(건), 배수
     leaseUnit: 7_000, leaseRate: 1 // 리스 원가(건), 배수
   },
+
+  customer: { ...defaultCustomer },
 
   // 고정비
   fixed: {
@@ -314,7 +347,7 @@ const defaultState = {
  * 메인 컴포넌트
  *************************/
 export default function FinancialCalculatorApp(){
-  const [state,setState] = useState(defaultState);
+  const [state,setState] = useState<any>(defaultState);
   const [scenario, setScenario] = useState<'con'|'neu'|'agg'>('neu');
   const scenarioMult = state.weights[scenario];
   const [periodDraft,setPeriodDraft] = useState({start:1,end:3,mau:300});
@@ -325,6 +358,8 @@ export default function FinancialCalculatorApp(){
   const [caseList, setCaseList] = useState<any[]>([]);
   const [saving, setSaving] = useState<'idle'|'saving'|'saved'|'error'>('idle');
   const versionRef = useRef<number>(0);
+
+  const customer = state.customer ?? defaultCustomer;
 
   // ① 목록 + (선택) 현재 state 불러오기
 const fetchCaseList = async () => {
@@ -663,6 +698,79 @@ const deleteCase = async () => {
             </HoverCard>
           </div>
 
+          {/* 고객 지표 (카드) */}
+          <div className="xl:col-span-4">
+            <HoverCard>
+              <CardHeader><CardTitle className="text-sm text-slate-600">고객 지표</CardTitle></CardHeader>
+              <CardContent className="grid grid-cols-2 gap-3">
+                <NumberInput
+                  label="관문 통과율 (%)"
+                  value={Number((customer.funnelRate * 100).toFixed(1))}
+                  onChange={(v)=>setState(s=>({
+                    ...s,
+                    customer: {
+                      ...(s.customer ?? defaultCustomer),
+                      funnelRate: clamp01(((Number.isFinite(v) ? v : 0) / 100)),
+                    }
+                  }))}
+                />
+                <NumberInput
+                  label="Standard/Pro 비중 (%)"
+                  value={Number((customer.proShare * 100).toFixed(1))}
+                  onChange={(v)=>setState(s=>({
+                    ...s,
+                    customer: {
+                      ...(s.customer ?? defaultCustomer),
+                      proShare: clamp01(((Number.isFinite(v) ? v : 0) / 100)),
+                    }
+                  }))}
+                />
+                <NumberInput
+                  label="이용자 리텐션율 (%)"
+                  value={Number((customer.retentionRate * 100).toFixed(1))}
+                  onChange={(v)=>setState(s=>({
+                    ...s,
+                    customer: {
+                      ...(s.customer ?? defaultCustomer),
+                      retentionRate: clamp01(((Number.isFinite(v) ? v : 0) / 100)),
+                    }
+                  }))}
+                />
+                <div className="space-y-1">
+                  <Label className="text-slate-700">Churn Rate (%)</Label>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                    {Number(((1 - customer.retentionRate) * 100).toFixed(1))}%
+                  </div>
+                </div>
+                <NumberInput
+                  label="무료 이용자 비율 (%)"
+                  value={Number((customer.freeRatio * 100).toFixed(1))}
+                  onChange={(v)=>setState(s=>({
+                    ...s,
+                    customer: {
+                      ...(s.customer ?? defaultCustomer),
+                      freeRatio: clamp01(((Number.isFinite(v) ? v : 0) / 100)),
+                    }
+                  }))}
+                />
+                <NumberInput
+                  label="ARPU 보정 배수"
+                  value={Number(customer.arpuAdjust.toFixed(2))}
+                  onChange={(v)=>setState(s=>({
+                    ...s,
+                    customer: {
+                      ...(s.customer ?? defaultCustomer),
+                      arpuAdjust: Math.max(0, Number.isFinite(v) ? v : defaultCustomer.arpuAdjust),
+                    }
+                  }))}
+                />
+                <div className="col-span-2 text-xs text-slate-500">
+                  - 비율 입력은 0~100% 사이 값으로 자동 보정됩니다. ARPU 보정은 구독 매출에 곱해집니다.
+                </div>
+              </CardContent>
+            </HoverCard>
+          </div>
+
           {/* 인쇄 원가 (작은 카드) */}
           <div className="xl:col-span-4">
             <HoverCard>
@@ -845,7 +953,7 @@ const deleteCase = async () => {
                 <NumberInput label="MAU" value={periodDraft.mau}
                             onChange={v=>setPeriodDraft(d=>({...d,mau:Math.max(0,Math.round(v||0))}))}/>
                 <div className="col-span-3 flex gap-2">
-                  <Button variant="secondary" className="gap-2" onClick={()=>setState(s=>({...s,periods:[...s.periods,{id:uid(),start:periodDraft.start,end:periodDraft.end,mau:periodDraft.mau,subCR:0.03,prtCR:0.05,server:500_000,hasWage:false,avgWage:3_000_000,heads:0,hasOffice:false,hasLease:false,leaseCnt:0}]}))}><Plus className="w-4 h-4"/> 구간 추가</Button>
+                  <Button variant="secondary" className="gap-2" onClick={()=>setState(s=>({...s,periods:[...s.periods,{id:uid(),start:periodDraft.start,end:periodDraft.end,mau:periodDraft.mau,subCR:0.03,prtCR:0.05,server:0,hasWage:false,avgWage:3_000_000,heads:0,hasOffice:false,hasLease:false,leaseCnt:0}]}))}><Plus className="w-4 h-4"/> 구간 추가</Button>
                   <Button variant="outline" onClick={()=>setState(s=>({...s,periods:[]}))}>초기화</Button>
                 </div>
                 <p className="text-xs text-slate-500">구간은 아래 ② 활성 사용자 시나리오 표의 첫 두 열(기간·MAU)와 자동 연동됩니다.</p>
@@ -1443,11 +1551,18 @@ function MoneyInput({label,value,onChange}:{label:string,value:number,onChange:(
     </div>
   )
 }
-function NumberInput({label,value,onChange}:{label:string,value:number,onChange:(v:number)=>void}){
+function NumberInput(
+  {label, value, onChange, ...rest}: {label:string; value:number; onChange:(v:number)=>void} & React.InputHTMLAttributes<HTMLInputElement>
+){
   return (
     <div className="space-y-1">
       <Label className="text-slate-700">{label}</Label>
-      <Input type="number" value={value} onChange={(e)=>onChange(parseFloat(e.target.value||'0'))}/>
+      <Input
+        type="number"
+        value={value}
+        onChange={(e)=>onChange(parseFloat(e.target.value||'0'))}
+        {...rest}
+      />
     </div>
   )
 }
@@ -1493,60 +1608,65 @@ function PillBtn({active, children, onClick}:{active?:boolean; children:React.Re
  * 표들
  *************************/
 function CostByPeriodTable({state}:{state:any}){
-const outsCost = state.print.outsUnit * state.print.outsRate;
-const leaseCost = state.print.leaseUnit * state.print.leaseRate;
-const [asPct, setAsPct] = React.useState(false);
-const fmt = (val:number, total:number)=> asPct ? (total? ((val/total)*100).toFixed(1)+'%':'-') : KRW.fmt(val);
+  const safeState = withDefaults(state);
+  const outsCost = (safeState.print.outsUnit ?? 0) * (safeState.print.outsRate ?? 1);
+  const leaseCost = (safeState.print.leaseUnit ?? 0) * (safeState.print.leaseRate ?? 1);
+  const customer = safeState.customer ?? defaultCustomer;
+  const funnelRate = clamp01(customer.funnelRate ?? defaultCustomer.funnelRate);
+  const [asPct, setAsPct] = React.useState(false);
+  const fmt = (val:number, total:number)=> asPct ? (total? ((val/total)*100).toFixed(1)+'%':'-') : KRW.fmt(val);
 
-
-return (
-<div className="overflow-auto">
-<div className="flex items-center justify-end gap-2 mb-2">
-<Label className="text-xs text-slate-500">비율 보기</Label>
-<Switch checked={asPct} onCheckedChange={setAsPct} aria-label="비율 보기 토글"/>
-</div>
-<table className="w-full text-sm">
-<thead className="bg-slate-100">
-<tr className="[&>th]:px-3 [&>th]:py-2 border-b border-slate-200">
-<th>기간</th>
-<th className="text-right">서버</th>
-<th className="text-right">사무실</th>
-<th className="text-right">인건비</th>
-<th className="text-right">리스(고정)</th>
-<th className="text-right">마케팅</th>
-<th className="text-right">법률/회계</th>
-<th className="text-right">총 변동비(월)</th>
-<th className="text-right">월 합계(고정+변동)</th>
-</tr>
-</thead>
-<tbody className="divide-y divide-slate-100">
-{state.periods.sort((a:any,b:any)=>a.start-b.start).map((p:any)=>{
-const wage = p.hasWage ? (p.avgWage*p.heads):0;
-const office = p.hasOffice ? state.fixed.office : 0;
-const leaseFix = p.hasLease ? state.fixed.leaseMonthly*p.leaseCnt : 0;
-const fixed = p.server + wage + office + state.fixed.mkt + state.fixed.legal + leaseFix;
-const unitVar = p.hasLease ? leaseCost : outsCost;
-const varMonthly = Math.round(p.mau * p.prtCR * unitVar);
-const totalBase = fixed + varMonthly;
-return (
-<tr key={p.id} className="[&>td]:px-3 [&>td]:py-2">
-<td>{p.start}~{p.end}</td>
-<td className="text-right">{fmt(p.server, totalBase)}</td>
-<td className="text-right">{fmt(office, totalBase)}</td>
-<td className="text-right">{fmt(wage, totalBase)}</td>
-<td className="text-right">{fmt(leaseFix, totalBase)}</td>
-<td className="text-right">{fmt(state.fixed.mkt, totalBase)}</td>
-<td className="text-right">{fmt(state.fixed.legal, totalBase)}</td>
-<td className="text-right">{fmt(varMonthly, totalBase)}</td>
-<td className="text-right">{asPct ? '100%' : KRW.fmt(totalBase)}</td>
-</tr>
-)
-})}
-</tbody>
-</table>
-</div>
-)
+  return (
+    <div className="overflow-auto">
+      <div className="flex items-center justify-end gap-2 mb-2">
+        <Label className="text-xs text-slate-500">비율 보기</Label>
+        <Switch checked={asPct} onCheckedChange={setAsPct} aria-label="비율 보기 토글"/>
+      </div>
+      <table className="w-full text-sm">
+        <thead className="bg-slate-100">
+          <tr className="[&>th]:px-3 [&>th]:py-2 border-b border-slate-200">
+            <th>기간</th>
+            <th className="text-right">서버·스토리지</th>
+            <th className="text-right">임대료</th>
+            <th className="text-right">인건비</th>
+            <th className="text-right">리스(고정)</th>
+            <th className="text-right">마케팅</th>
+            <th className="text-right">법무/관리</th>
+            <th className="text-right">인쇄 변동비/월</th>
+            <th className="text-right">총 합계(고정+변동)</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {safeState.periods.sort((a:any,b:any)=>a.start-b.start).map((p:any)=>{
+            const wage = p.hasWage ? (p.avgWage * p.heads) : 0;
+            const office = p.hasOffice ? (safeState.fixed.office ?? 0) : 0;
+            const leaseFix = p.hasLease ? (safeState.fixed.leaseMonthly ?? 0) * (p.leaseCnt ?? 0) : 0;
+            const infraEst = estimateInfraCost(p.start, p.mau, safeState.infra ?? defaultInfra);
+            const infraCost = infraEst.serverCost + infraEst.storageCost + infraEst.aiCost;
+            const effectiveMau = Math.max(0, Math.round(p.mau * funnelRate));
+            const unitVar = p.hasLease ? leaseCost : outsCost;
+            const varMonthly = Math.round(effectiveMau * (p.prtCR ?? 0) * unitVar);
+            const totalBase = infraCost + office + wage + leaseFix + (safeState.fixed.mkt ?? 0) + (safeState.fixed.legal ?? 0) + varMonthly;
+            return (
+              <tr key={p.id} className="[&>td]:px-3 [&>td]:py-2">
+                <td>{p.start}~{p.end}</td>
+                <td className="text-right">{fmt(infraCost, totalBase)}</td>
+                <td className="text-right">{fmt(office, totalBase)}</td>
+                <td className="text-right">{fmt(wage, totalBase)}</td>
+                <td className="text-right">{fmt(leaseFix, totalBase)}</td>
+                <td className="text-right">{fmt(safeState.fixed.mkt ?? 0, totalBase)}</td>
+                <td className="text-right">{fmt(safeState.fixed.legal ?? 0, totalBase)}</td>
+                <td className="text-right">{fmt(varMonthly, totalBase)}</td>
+                <td className="text-right">{asPct ? '100%' : KRW.fmt(totalBase)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
 }
+
 
 function BEPTable({state}:{state:any}){
   const std = state.pricing.standard;
@@ -1787,9 +1907,17 @@ function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:nu
   const maxEnd = periods.reduce((m:number,p:any)=>Math.max(m,p.end),0);
 
   const stdPrice   = state.pricing?.standard ?? 0;
+  const proPrice   = state.pricing?.pro ?? 0;
   const printPrice = state.print?.price ?? 0;
   const outsCost   = (state.print?.outsUnit ?? 0) * (state.print?.outsRate ?? 1);
   const leaseCost  = (state.print?.leaseUnit ?? 0) * (state.print?.leaseRate ?? 1);
+
+  const customer = state.customer ?? defaultCustomer;
+  const funnelRate = clamp01(customer.funnelRate ?? defaultCustomer.funnelRate);
+  const proShare = clamp01(customer.proShare ?? defaultCustomer.proShare);
+  const retentionRate = clamp01(customer.retentionRate ?? defaultCustomer.retentionRate);
+  const freeRatioInput = clamp01(customer.freeRatio ?? defaultCustomer.freeRatio);
+  const arpuAdjust = Number.isFinite(customer.arpuAdjust) ? customer.arpuAdjust : defaultCustomer.arpuAdjust;
 
   const bm = state.bmSimple ?? {
     activation: { auxStartMonth: 13, b2bStartMonth: 25, apiStartMonth: 31 },
@@ -1803,53 +1931,60 @@ function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:nu
   const months:any[] = [];
   let lastMAU = 0;
   let cum = 0;
+  let prevSubs = 0;
 
   for(let m=1; m<=maxEnd; m++){
     const pIdx = periods.findIndex((pp:any)=> m>=pp.start && m<=pp.end);
     if(pIdx<0){
-      months.push({ month:m, mau:0, subRev:0, prtRev:0, rev:0, varCost:0, fixed:0, net:0, cum, 
+      months.push({ month:m, mau:0, subRev:0, prtRev:0, rev:0, varCost:0, fixed:0, net:0, cum,
         rev_premium:0, rev_ads:0, rev_affiliate:0, rev_b2b:0, rev_api:0,
-        serverAuto:0, storageCost:0, ratios:{sub:0, prt:0} });
+        serverAuto:0, storageCost:0, ratios:{sub:0, prt:0}, subs:0, newSubs:0, retainedSubs:0, churnedSubs:0, freeUsers:0 });
       continue;
     }
     const p = periods[pIdx];
 
-    // MAU 선형 보간
     const prevTarget = (pIdx>0) ? periods[pIdx-1].mau : p.mau;
     const periodLen  = (p.end - p.start + 1);
     const step       = (p.mau - prevTarget) / Math.max(1, periodLen);
     const mau        = (pIdx===0) ? p.mau : Math.max(0, Math.round(lastMAU + step));
     lastMAU = mau;
 
-    // 구독/인쇄
-    const subs      = mau * (p.subCR ?? 0);
-    const prtOrders = mau * (p.prtCR ?? 0);
-    const subRev    = subs * stdPrice;
+    const effectiveMau = Math.max(0, Math.round(mau * funnelRate));
+    const prevSubsBefore = prevSubs;
+    const retainedSubs = prevSubsBefore * retentionRate;
+    const churnedSubs = Math.max(0, prevSubsBefore - retainedSubs);
+    const potentialNew = Math.max(0, effectiveMau - retainedSubs);
+    const rawNewSubs = effectiveMau * (p.subCR ?? 0);
+    const newSubs = Math.min(potentialNew, rawNewSubs);
+    const totalSubs = retainedSubs + newSubs;
+    prevSubs = totalSubs;
+
+    const standardSubs = totalSubs * (1 - proShare);
+    const proSubs = totalSubs * proShare;
+    const subRevBase = (standardSubs * stdPrice) + (proSubs * proPrice);
+    const subRev    = subRevBase * arpuAdjust;
+
+    const prtOrders = effectiveMau * (p.prtCR ?? 0);
     const prtRev    = prtOrders * printPrice;
     const coreRev   = subRev + prtRev;
 
-    // 인쇄 변동원가
     const unitVar   = p.hasLease ? leaseCost : outsCost;
     const varCostPrt= prtOrders * unitVar;
 
-    // 자동 인프라 비용 계산 (서버 + 스토리지 + AI)
     const infraInput = (state.infra ?? defaultInfra);
     const infraEst = estimateInfraCost(m, mau, {
       photosPerUser: infraInput.photosPerUser ?? defaultInfra.photosPerUser,
       avgPhotoMB: infraInput.avgPhotoMB ?? defaultInfra.avgPhotoMB,
       storagePricePerGB: infraInput.storagePricePerGB ?? defaultInfra.storagePricePerGB,
-      // 새 구조 그대로 전달(없으면 기본값이 resolveAiParams에서 하위호환 처리)
       ai: infraInput.ai,
-      aiCvPerImage: infraInput.aiCvPerImage,            // fallback
-      aiCaptionPerImage: infraInput.aiCaptionPerImage,  // fallback
-      aiCaptionRate: infraInput.aiCaptionRate,          // fallback
+      aiCvPerImage: infraInput.aiCvPerImage,
+      aiCaptionPerImage: infraInput.aiCaptionPerImage,
+      aiCaptionRate: infraInput.aiCaptionRate,
     });
     const serverAuto   = infraEst.serverCost;
     const storageCost  = infraEst.storageCost;
     const aiCost       = infraEst.aiCost;
 
-
-    // 고정비(서버·스토리지·AI 자동반영 + 인건비/사무실/리스/마케팅/법무)
     const wage     = p.hasWage   ? (p.avgWage * p.heads) : 0;
     const office   = p.hasOffice ? (state.fixed?.office ?? 0) : 0;
     const leaseFix = p.hasLease  ? ((state.fixed?.leaseMonthly ?? 0) * (p.leaseCnt ?? 0)) : 0;
@@ -1857,8 +1992,9 @@ function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:nu
     const legal    = state.fixed?.legal ?? 0;
     const fixed    = serverAuto + storageCost + aiCost + wage + office + leaseFix + mkt + legal;
 
+    const freeUsersAuto = Math.max(0, mau - totalSubs);
+    const freeUsers = freeRatioInput > 0 ? Math.min(mau, Math.max(0, mau * freeRatioInput)) : freeUsersAuto;
 
-    // 간단 BM
     const ax    = bm.activation;
     const auxOn = m >= (ax?.auxStartMonth ?? 9999);
     const b2bOn = m >= (ax?.b2bStartMonth ?? 9999);
@@ -1866,14 +2002,14 @@ function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:nu
 
     let revPremium=0, costPremium=0;
     if(auxOn){
-      const upsellSubs = subs * (bm.premium?.upsellRate ?? 0);
+      const upsellSubs = totalSubs * (bm.premium?.upsellRate ?? 0);
       revPremium = upsellSubs * (bm.premium?.price ?? 0);
       costPremium = revPremium * (bm.premium?.costRate ?? 0);
     }
 
     let revAds=0, costAds=0;
     if(auxOn){
-      const impressions = mau * (bm.ads?.pvPerUser ?? 0);
+      const impressions = freeUsers * (bm.ads?.pvPerUser ?? 0);
       const revCPM = (impressions * (bm.ads?.cpm ?? 0)) / 1000;
       const revSponsorMonthly = ((bm.ads?.sponsorFee ?? 0) * (bm.ads?.sponsorPerQuarter ?? 0)) / 3;
       revAds = revCPM + revSponsorMonthly;
@@ -1882,7 +2018,7 @@ function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:nu
 
     let revAffiliate=0, costAffiliate=0;
     if(auxOn){
-      const buyers = mau * (bm.affiliate?.conv ?? 0);
+      const buyers = freeUsers * (bm.affiliate?.conv ?? 0);
       const gmv    = buyers * (bm.affiliate?.aov ?? 0);
       revAffiliate = gmv * (bm.affiliate?.takeRate ?? 0);
       costAffiliate= revAffiliate * (bm.affiliate?.costRate ?? 0);
@@ -1916,22 +2052,24 @@ function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:nu
       month: m, mau,
       subRev, prtRev,
       rev: totalRev, varCost: totalVar, fixed, net, cum,
-      // breakdowns
       rev_premium:   revPremium,
       rev_ads:       revAds,
       rev_affiliate: revAffiliate,
       rev_b2b:       revB2B,
       rev_api:       revAPI,
-      // 인프라 브레이크다운(표/차트에서 활용 가능)
       serverAuto, storageCost,
       ratios: {
         sub: totalRev ? (subRev/totalRev) : 0,
         prt: totalRev ? (prtRev/totalRev) : 0,
-      }
+      },
+      subs: totalSubs,
+      newSubs,
+      retainedSubs,
+      churnedSubs,
+      freeUsers,
     });
   }
 
-  // 요약 지표
   let minCum = 0, minCumMonth = 0, bepMonth: number|undefined = undefined;
   for(const r of months){
     if(r.cum < minCum){ minCum = r.cum; minCumMonth = r.month; }
@@ -1939,7 +2077,6 @@ function calcMonthlySeries(state:any, mult:number=1.0, beta:number=0.6, gamma:nu
   }
   return { months, minCum, minCumMonth, bepMonth };
 }
-
 
 
 function calcScenarioYears(state:any){
